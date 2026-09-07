@@ -1,0 +1,148 @@
+@import "tailwindcss";
+
+/*
+ * Deliberately no webfont. A front desk with a flaky connection should never
+ * see a blank or reflowing screen, and dropping next/font also removes a
+ * build-time network dependency on Google Fonts.
+ */
+@theme {
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono",
+    monospace;
+
+  /* Warm brass accent against a cool ink base — reads as the salon brand
+     without competing with the status colours in the grid. */
+  --color-brand-50: #fbf7ef;
+  --color-brand-100: #f4ead3;
+  --color-brand-200: #e8d3a4;
+  --color-brand-300: #d9b76c;
+  --color-brand-400: #cb9f45;
+  --color-brand-500: #b7862c;
+  --color-brand-600: #9a6b23;
+  --color-brand-700: #7b5220;
+  --color-brand-800: #674321;
+  --color-brand-900: #593a20;
+
+  --color-ink-50: #f6f7f9;
+  --color-ink-100: #ebedf1;
+  --color-ink-200: #d3d8e0;
+  --color-ink-300: #adb6c4;
+  --color-ink-400: #808ea3;
+  --color-ink-500: #607088;
+  --color-ink-600: #4c5a70;
+  --color-ink-700: #3f4a5c;
+  --color-ink-800: #37404e;
+  --color-ink-900: #1c222c;
+  --color-ink-950: #12161d;
+}
+
+:root {
+  --surface: var(--color-ink-50);
+  --panel: #ffffff;
+  --panel-border: var(--color-ink-200);
+  --text: var(--color-ink-900);
+  --text-muted: var(--color-ink-500);
+  --slot-free: #ffffff;
+  --slot-free-hover: var(--color-brand-50);
+  --slot-past: var(--color-ink-100);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: var(--color-ink-950);
+    --panel: #1a2029;
+    --panel-border: #2c3542;
+    --text: var(--color-ink-50);
+    --text-muted: var(--color-ink-400);
+    --slot-free: #1a2029;
+    --slot-free-hover: #24303d;
+    --slot-past: #161c24;
+  }
+}
+
+@layer base {
+  html {
+    color-scheme: light dark;
+  }
+
+  body {
+    background: var(--surface);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Every control in this app is used dozens of times a day at speed — the
+     focus ring has to be unmistakable, including for keyboard-only use. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand-500);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+  }
+
+  .field {
+    @apply w-full rounded-lg border px-3 py-2.5 text-[15px] outline-none transition;
+    background: var(--panel);
+    border-color: var(--panel-border);
+    color: var(--text);
+  }
+
+  .field::placeholder {
+    color: var(--text-muted);
+  }
+
+  .label {
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-wider;
+    color: var(--text-muted);
+  }
+
+  /* Tailwind v4 cannot @apply a class defined in @layer components, so the
+     shared button base is written once here and shared by selector list
+     rather than by composition. */
+  .btn,
+  .btn-primary,
+  .btn-ghost,
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5
+      text-sm font-semibold transition disabled:cursor-not-allowed
+      disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800;
+  }
+
+  .btn-ghost {
+    @apply border;
+    border-color: var(--panel-border);
+    color: var(--text);
+  }
+
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--surface);
+  }
+
+  .btn-danger {
+    @apply border border-red-300 text-red-700 hover:bg-red-50
+      dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/40;
+  }
+}
+
+/* Respect the OS setting — a busy front desk should not get motion it did
+   not ask for. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
