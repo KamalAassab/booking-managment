@@ -211,6 +211,25 @@ bookings and re-booking a cancelled slot succeed.
 
 ## Deployment (Vercel)
 
+### Setting up the database without a terminal
+
+`npm run db:migrate && npm run db:seed` is the normal route, but it needs a
+machine with the repository checked out. If you only have a phone, or the
+database is behind a network you cannot reach from where the code is,
+[`docs/neon-setup.sql`](./docs/neon-setup.sql) does the same job in one paste:
+open the Neon console, go to the **SQL Editor**, paste the whole file, Run.
+
+It creates the schema, applies all three migrations, adds the double-booking
+constraint, inserts the three salons and both accounts, and records the
+migrations so a later `npm run db:migrate` sees them as already applied. It
+ends with a count you can check at a glance, and re-running it does nothing
+the second time — salons are upserted and existing accounts are left alone,
+so a password you have already changed is never reset.
+
+Change both passwords from the owner screen once you are signed in.
+
+### The normal route
+
 1. Import the repository, framework preset **Next.js**.
 2. Environment variables: `DATABASE_URL` (Neon pooled connection string) and
    `SESSION_SECRET` (a fresh 32-byte random value — not the development one).
