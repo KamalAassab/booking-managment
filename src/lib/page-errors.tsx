@@ -24,7 +24,7 @@ export function setupNoticeFor(error: unknown): React.ReactElement | null {
     return (
       <SetupNotice
         title="Base de données non initialisée"
-        message="La connexion fonctionne, mais les tables n'ont pas encore été créées. Ces deux commandes, lancées une seule fois avec DATABASE_URL pointant sur la base de production, terminent l'installation."
+        message="La connexion fonctionne, mais les tables n'ont pas encore été créées. Ces deux commandes, lancées une seule fois avec DATABASE_URL pointant sur la base de production, terminent l'installation. Sans terminal sous la main, collez docs/neon-setup.sql dans l'éditeur SQL de la console Neon : le résultat est identique."
         steps={["npm run db:migrate", "npm run db:seed"]}
       />
     );

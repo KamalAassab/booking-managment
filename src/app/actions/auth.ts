@@ -42,7 +42,14 @@ function describeInfrastructureError(error: unknown): string | null {
     return `Configuration du serveur incomplète : ${error.message}`;
   }
   if (isMissingSchemaError(error)) {
-    return "La base de données n'a pas encore été initialisée (npm run db:migrate).";
+    // Two routes deliberately, because the person reading this is often on a
+    // phone with no terminal — which is exactly the situation a freshly
+    // deployed project is in.
+    return (
+      "La base de données n'a pas encore été initialisée. " +
+      "Lancez « npm run db:migrate && npm run db:seed », ou collez " +
+      "docs/neon-setup.sql dans l'éditeur SQL de la console Neon."
+    );
   }
   if (isConnectionError(error)) {
     return "Base de données injoignable. Réessayez dans un instant.";
