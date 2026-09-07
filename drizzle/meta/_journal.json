@@ -15,6 +15,13 @@
       "when": 1788820215494,
       "tag": "0001_no_overlap",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788823025316,
+      "tag": "0002_guards",
+      "breakpoints": true
     }
   ]
 }

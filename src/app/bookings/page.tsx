@@ -1,10 +1,13 @@
 import { redirect } from "next/navigation";
 
 import { BookingsBoard } from "@/components/bookings-board";
+import { SetupNotice } from "@/components/setup-notice";
 import { requireSession } from "@/lib/auth";
 import { getSalonBySlug, listBookings, listSalons } from "@/lib/bookings";
+import { setupNoticeFor } from "@/lib/page-errors";
 import { isValidDateString, todayInSalonTz } from "@/lib/time";
 import { toBookingDTO, toSalonDTO } from "@/lib/types";
+import type { Salon } from "@/db/schema";
 
 export const dynamic = "force-dynamic";
 
@@ -14,18 +17,26 @@ export default async function BookingsPage({
   const session = await requireSession();
   const params = await searchParams;
 
-  const salons = await listSalons();
+  let salons: Salon[];
+  try {
+    salons = await listSalons();
+  } catch (error) {
+    // Before this, an unmigrated database threw SQLSTATE 42P01 straight out
+    // of the page and Next.js answered "A server error occurred" — the exact
+    // screen this audit started from. The `salons.length === 0` branch below
+    // was unreachable, because the query never returned to be counted.
+    const notice = setupNoticeFor(error);
+    if (notice) return notice;
+    throw error;
+  }
+
   if (salons.length === 0) {
     return (
-      <main className="flex flex-1 items-center justify-center p-8 text-center">
-        <div className="panel max-w-md rounded-2xl p-8">
-          <h1 className="text-lg font-semibold">Aucun salon configuré</h1>
-          <p className="mt-2 text-sm" style={{ color: "var(--text-muted)" }}>
-            Lancez <code className="font-mono">npm run db:seed</code> pour créer
-            les trois salons et les comptes.
-          </p>
-        </div>
-      </main>
+      <SetupNotice
+        title="Aucun salon configuré"
+        message="Les tables existent mais elles sont vides. Cette commande crée les trois salons et les deux comptes."
+        steps={["npm run db:seed"]}
+      />
     );
   }
 
@@ -40,8 +51,8 @@ export default async function BookingsPage({
       : todayInSalonTz();
 
   // Normalise the URL so the salon/date are always explicit — this is what
-  // makes the live stream, refresh, and "open on the second monitor" all
-  // land on the same view.
+  // makes the live updates, refresh, and "open on the second monitor" all
+  // land on the same view. redirect() throws, so it stays outside any catch.
   if (salon.slug !== requestedSalon || date !== requestedDate) {
     redirect(`/bookings?salon=${salon.slug}&date=${date}`);
   }

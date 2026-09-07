@@ -98,22 +98,27 @@ but that is a courtesy, never the guarantee.
 
 ### The calendar updates live
 
-`/api/stream` is a Server-Sent Events endpoint that watches a cheap
-`(max(updated_at), count)` watermark once a second and pushes the whole day
-when it moves. A slot disappears for everyone within about a second of being
-taken.
+`/api/bookings/watermark` returns a two-number change token — the newest
+`updated_at` and a row count — for one salon and one day. Each open tab polls
+it every two seconds and refetches the day only when the value moves. A slot
+disappears for everyone within about two seconds of being taken.
 
 Deliberate choices:
 
+- **Not Server-Sent Events**, which is what this was until the audit in
+  `docs/AUDIT.md`. An SSE endpoint holds a serverless function open for the
+  whole life of every tab: seven staff with the calendar open all day is seven
+  functions running continuously, which is billed compute and well past the
+  cost ceiling in the brief. It also outlived Vercel's function duration
+  limit, so it was killed and reconnected on a loop.
 - **Not Postgres `LISTEN/NOTIFY`**, which would be the textbook answer but
   needs a long-lived direct connection that serverless functions cannot hold.
-- **The stream only runs while the tab is visible.** A browser left open
-  overnight would otherwise keep the Neon compute awake and quietly blow the
-  monthly cost estimate.
-- **The stream closes itself every four minutes**; `EventSource` reconnects.
-  That keeps each invocation well inside Vercel's function ceiling.
+- **Polling stops when the tab is hidden.** A browser left open overnight
+  would otherwise keep the Neon compute awake.
+- **Failures back off exponentially**, capped at 30 seconds, so a database
+  having a bad minute is not hammered by every open browser at once.
 - **`BroadcastChannel`** updates other tabs in the same browser instantly,
-  without waiting for the poll.
+  without waiting for the next poll.
 
 ## WhatsApp confirmations
 
@@ -126,6 +131,12 @@ official `wa.me` click-to-chat link with the confirmation message pre-filled.
 Because the agent's browser is a linked companion device on the salon's
 number, it opens straight into the compose box and the agent presses Send
 once.
+
+The salon's own number — the account the confirmations go out from — is
+**+212 766 092 140**, recorded in `src/lib/salon-contact.ts` and shown on the
+owner screen. Override it per environment with `SALON_WHATSAPP_NUMBER`. It is
+configuration rather than a database column because there is exactly one of
+it and it is read but never written.
 
 **One-time setup:** on the owner's phone, WhatsApp → Settings → Linked
 Devices, and scan the QR code from each of the four agents' computers. The
@@ -173,8 +184,8 @@ is resolved through `Intl` in the salons' own timezone.
 
 ## Tests
 
-`npm test` covers the two places a bug actually costs the business money,
-rather than chasing blanket coverage:
+`npm test` runs the full suite. It covers the places a bug actually costs the
+business money, rather than chasing blanket coverage:
 
 - **Double-booking logic** — overlap detection, back-to-back bookings, long
   bookings swallowing later slots, cancelled slots becoming reusable, editing
@@ -184,6 +195,15 @@ rather than chasing blanket coverage:
 - **Phone normalisation and the `wa.me` link** — if a number is normalised
   wrong the agent opens a chat with the wrong person, mid-call, with no
   visible error.
+- **Driver error classification** — the audit found that a double booking was
+  being reported as a 500 rather than a 409 because the SQLSTATE lives on
+  `error.cause`, not on `error`. That path now has its own tests using the
+  error shapes both drivers really throw.
+- **Login throttling** and the **deployment health checks**.
+
+Integration suites run against a real PostgreSQL when `TEST_DATABASE_URL` is
+set, and skip themselves when it is not, so `npm test` passes on a machine
+with no database.
 
 The database-level constraints were verified against a real PostgreSQL 16
 instance: identical slots and overlapping ranges are rejected, back-to-back
@@ -196,10 +216,33 @@ bookings and re-booking a cancelled slot succeed.
    `SESSION_SECRET` (a fresh 32-byte random value — not the development one).
 3. Run `npm run db:migrate` and `npm run db:seed` once against the production
    database.
-4. Keep preview deployments on, so every change is seen working before it
+4. Open `/api/health`. It reports whether the environment variables, the
+   database connection, each table and the double-booking constraint are all
+   in place, and names the command to run for whatever is missing. Do this
+   before handing the URL to anyone.
+5. Keep preview deployments on, so every change is seen working before it
    reaches the salons.
 
 `btree_gist` is created by the migration; Neon supports it out of the box.
+
+## When something is wrong
+
+`/api/health` is the first place to look. It answers without a session —
+deliberately, because the thing that is broken is often signing in — and
+reports only presence and shape, never a value: no connection string, no
+host, no secret.
+
+```
+{ "status": "fail",
+  "checks": [ { "name": "table:salons", "state": "fail",
+                "detail": "Missing — run `npm run db:migrate`." } ],
+  "nextStep": "Missing — run `npm run db:migrate`." }
+```
+
+The three states a fresh deployment can be in — environment variable not set,
+database unreachable, tables never created — each render a page saying which
+one it is and what to run, rather than a blank server error. See
+`docs/AUDIT.md` for how they used to behave.
 
 ## Maintenance
 

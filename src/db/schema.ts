@@ -48,21 +48,35 @@ export const users = pgTable("users", {
  * The three physical salons. Opening hours and slot length are per salon so
  * the owner can adjust them later without a code change.
  */
-export const salons = pgTable("salons", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  slug: varchar("slug", { length: 24 }).notNull().unique(),
-  name: varchar("name", { length: 80 }).notNull(),
-  sortOrder: smallint("sort_order").notNull().default(0),
-  /** Minutes from midnight, salon-local (Africa/Casablanca). 9:00 => 540. */
-  opensAtMin: integer("opens_at_min").notNull().default(9 * 60),
-  /** Exclusive end of the last bookable slot. 20:00 => 1200. */
-  closesAtMin: integer("closes_at_min").notNull().default(20 * 60),
-  /** Grid granularity in minutes. */
-  slotMin: integer("slot_min").notNull().default(30),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const salons = pgTable(
+  "salons",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    slug: varchar("slug", { length: 24 }).notNull().unique(),
+    name: varchar("name", { length: 80 }).notNull(),
+    sortOrder: smallint("sort_order").notNull().default(0),
+    /** Minutes from midnight, salon-local (Africa/Casablanca). 9:00 => 540. */
+    opensAtMin: integer("opens_at_min").notNull().default(9 * 60),
+    /** Exclusive end of the last bookable slot. 20:00 => 1200. */
+    closesAtMin: integer("closes_at_min").notNull().default(20 * 60),
+    /** Grid granularity in minutes. */
+    slotMin: integer("slot_min").notNull().default(30),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    // Opening hours are the one thing the owner may eventually edit by hand.
+    // A slot length of zero would make the grid generator loop forever and a
+    // closing time before opening would render an empty day with no
+    // explanation, so both are refused at the storage layer.
+    check(
+      "salons_hours_ordered",
+      sql`${t.opensAtMin} >= 0 AND ${t.closesAtMin} <= 1440 AND ${t.opensAtMin} < ${t.closesAtMin}`,
+    ),
+    check("salons_slot_positive", sql`${t.slotMin} > 0 AND ${t.slotMin} <= 480`),
+  ],
+);
 
 /**
  * Reservations.
@@ -115,6 +129,17 @@ export const bookings = pgTable(
       .where(sql`status <> 'cancelled'`),
     check("bookings_start_min_range", sql`${t.startMin} BETWEEN 0 AND 1439`),
     check("bookings_duration_positive", sql`${t.durationMin} > 0`),
+    // A booking must end on the day it starts. Without this, a 23:00 booking
+    // of two hours produces int4range(1380, 1500) — a range the exclusion
+    // constraint compares only against *the same* booking_date, so the two
+    // hours it really occupies on the following morning are invisible to it
+    // and can be double-booked.
+    check(
+      "bookings_within_day",
+      sql`${t.startMin} + ${t.durationMin} <= 1440`,
+    ),
+    check("bookings_client_name_present", sql`length(btrim(${t.clientName})) > 0`),
+    check("bookings_service_present", sql`length(btrim(${t.service})) > 0`),
   ],
 );
 

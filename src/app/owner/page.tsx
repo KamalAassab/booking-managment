@@ -1,8 +1,11 @@
 import { logout } from "@/app/actions/auth";
 import { OwnerPasswordForms } from "@/components/owner-password-forms";
+import type { Booking, Salon } from "@/db/schema";
 import { requireOwner } from "@/lib/auth";
 import { listBookingsForSalons, listSalons } from "@/lib/bookings";
+import { setupNoticeFor } from "@/lib/page-errors";
 import { formatPhoneForDisplay } from "@/lib/phone";
+import { salonWhatsAppNumber } from "@/lib/salon-contact";
 import {
   addDays,
   formatLongDate,
@@ -21,12 +24,21 @@ export default async function OwnerPage({ searchParams }: PageProps<"/owner">) {
   const date =
     requested && isValidDateString(requested) ? requested : todayInSalonTz();
 
-  const salons = await listSalons();
-  const bookings = await listBookingsForSalons(
-    salons.map((s) => s.id),
-    date,
-  );
+  let salons: Salon[];
+  let bookings: Booking[];
+  try {
+    salons = await listSalons();
+    bookings = await listBookingsForSalons(
+      salons.map((s) => s.id),
+      date,
+    );
+  } catch (error) {
+    const notice = setupNoticeFor(error);
+    if (notice) return notice;
+    throw error;
+  }
   const active = bookings.filter((b) => b.status !== "cancelled");
+  const salonWhatsApp = salonWhatsAppNumber();
 
   return (
     <div className="flex min-h-full flex-1 flex-col">
@@ -146,6 +158,26 @@ export default async function OwnerPage({ searchParams }: PageProps<"/owner">) {
                 </div>
               );
             })}
+          </div>
+        </section>
+
+        <section className="mb-10">
+          <h2 className="mb-1 text-xl font-semibold tracking-tight">
+            Numéro WhatsApp du salon
+          </h2>
+          <p className="mb-4 text-sm" style={{ color: "var(--text-muted)" }}>
+            Les confirmations partent de ce numéro. Chaque poste du centre
+            d&apos;appels doit y être relié comme appareil lié (WhatsApp →
+            Réglages → Appareils liés), sinon le lien pré-rempli s&apos;ouvre
+            sans compte connecté.
+          </p>
+          <div className="panel inline-flex items-baseline gap-3 rounded-xl px-4 py-3">
+            <span className="text-lg font-semibold tabular-nums">
+              {salonWhatsApp.display}
+            </span>
+            <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+              {salonWhatsApp.e164}
+            </span>
           </div>
         </section>
 

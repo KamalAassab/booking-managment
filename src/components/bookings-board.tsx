@@ -31,6 +31,18 @@ export type DialogState =
 
 type StreamState = "connecting" | "live" | "offline";
 
+/**
+ * How often the calendar asks whether anything changed. Two seconds is the
+ * business requirement ("the slot disappears while the other agent is still
+ * talking") met at a cost of roughly 1,800 tiny requests per tab per hour,
+ * each one an indexed two-value aggregate.
+ */
+const POLL_MS = 2000;
+/** Hidden tabs check rarely, purely to notice when they become visible. */
+const POLL_IDLE_MS = 30_000;
+/** Ceiling for the exponential backoff after repeated failures. */
+const POLL_MAX_BACKOFF_MS = 30_000;
+
 export function BookingsBoard({
   salons,
   salon,
@@ -97,62 +109,78 @@ export function BookingsBoard({
     }
   }, [salon.slug, date, router]);
 
-  const sourceRef = useRef<EventSource | null>(null);
-
   useEffect(() => {
-    // Only stream while the tab is actually being looked at. An abandoned tab
-    // left open overnight would otherwise keep the Neon compute awake and
-    // quietly blow the monthly cost estimate in the brief.
+    // Poll a two-number change watermark and refetch the day only when it
+    // moves. This replaced a Server-Sent Events stream: see the comment in
+    // src/app/api/bookings/watermark/route.ts for why that design could not
+    // survive on Vercel. Perceived latency is unchanged — the stream polled
+    // the same query server-side, once a second, per connection.
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let lastWatermark: string | null = null;
+    let consecutiveFailures = 0;
 
-    const open = () => {
-      if (cancelled || sourceRef.current) return;
-      setStream("connecting");
-      const es = new EventSource(
-        `/api/stream?salon=${encodeURIComponent(salon.slug)}&date=${date}`,
-      );
-      sourceRef.current = es;
+    const schedule = (ms: number) => {
+      if (cancelled) return;
+      timer = setTimeout(poll, ms);
+    };
 
-      es.addEventListener("bookings", (event) => {
-        const data = JSON.parse((event as MessageEvent).data) as {
-          bookings: BookingDTO[];
-        };
-        setBookings(data.bookings);
+    const poll = async () => {
+      if (cancelled) return;
+      // Nobody is looking; do not spend a request or wake the database.
+      if (document.visibilityState !== "visible") return schedule(POLL_IDLE_MS);
+
+      try {
+        const res = await fetch(
+          `/api/bookings/watermark?salon=${encodeURIComponent(salon.slug)}&date=${date}`,
+          { cache: "no-store" },
+        );
+        if (res.status === 401) {
+          router.push("/login");
+          return;
+        }
+        if (!res.ok) throw new Error(String(res.status));
+
+        const { watermark } = (await res.json()) as { watermark: string };
+        consecutiveFailures = 0;
         setStream("live");
-      });
-      es.addEventListener("ping", () => setStream("live"));
-      es.onopen = () => setStream("live");
-      es.onerror = () => {
-        setStream("offline");
-        // EventSource reconnects on its own; the stream route closes every
-        // few minutes by design, so this is the expected steady state.
-      };
-    };
 
-    const close = () => {
-      sourceRef.current?.close();
-      sourceRef.current = null;
-    };
-
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        open();
-        void refetch();
-      } else {
-        close();
-        setStream("offline");
+        if (lastWatermark !== null && watermark !== lastWatermark) {
+          await refetch();
+        }
+        lastWatermark = watermark;
+        schedule(POLL_MS);
+      } catch {
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= 2) setStream("offline");
+        // Back off rather than hammering a database that is already
+        // struggling; capped so recovery is still quick once it returns.
+        schedule(Math.min(POLL_MS * 2 ** consecutiveFailures, POLL_MAX_BACKOFF_MS));
       }
     };
 
-    if (document.visibilityState === "visible") open();
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible") {
+        setStream("offline");
+        return;
+      }
+      // Coming back to the tab: catch up straight away rather than waiting
+      // out whatever remained of the interval.
+      if (timer) clearTimeout(timer);
+      consecutiveFailures = 0;
+      void refetch();
+      void poll();
+    };
+
+    void poll();
     document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
-      close();
     };
-  }, [salon.slug, date, refetch]);
+  }, [salon.slug, date, refetch, router]);
 
   // Same-browser tabs (screen A and a second window) update instantly rather
   // than waiting up to a second for the stream to notice.
