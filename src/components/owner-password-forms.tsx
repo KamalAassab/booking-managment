@@ -24,7 +24,8 @@ function Feedback({ state }: { state: ActionState }) {
     return (
       <p
         role="alert"
-        className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700 dark:bg-red-950/40 dark:text-red-300"
+        className="t-small mt-3 rounded-[10px] px-3 py-2.5"
+        style={{ background: "var(--danger-tint)", color: "var(--danger)" }}
       >
         {state.error}
       </p>
@@ -34,7 +35,8 @@ function Feedback({ state }: { state: ActionState }) {
     return (
       <p
         role="status"
-        className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+        className="t-small mt-3 rounded-[10px] px-3 py-2.5"
+        style={{ background: "var(--brass-tint)", color: "var(--ink)" }}
       >
         {state.success}
       </p>
@@ -55,7 +57,7 @@ export function OwnerPasswordForms() {
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <form action={staffAction} className="panel rounded-xl p-5">
+      <form action={staffAction} className="card p-5">
         <h3 className="mb-4 text-sm font-semibold">
           Mot de passe du personnel (partagé)
         </h3>
@@ -90,7 +92,7 @@ export function OwnerPasswordForms() {
         <Feedback state={staffState} />
       </form>
 
-      <form action={ownerAction} className="panel rounded-xl p-5">
+      <form action={ownerAction} className="card p-5">
         <h3 className="mb-4 text-sm font-semibold">Votre mot de passe</h3>
 
         <label className="label" htmlFor="owner-current">

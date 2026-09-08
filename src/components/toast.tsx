@@ -5,55 +5,72 @@ import { useEffect } from "react";
 export type ToastMessage = {
   tone: "success" | "error";
   text: string;
+  /** At most one. A toast with two decisions in it is a dialog. */
   action?: { label: string; href: string };
 };
 
-export function Toast({
-  message,
-  onDismiss,
-}: {
+type Props = {
   message: ToastMessage | null;
   onDismiss: () => void;
-}) {
+};
+
+const DISMISS_MS = 6000;
+
+export function Toast({ message, onDismiss }: Props) {
+  // A toast carrying the WhatsApp link is the only record of a step that has
+  // not happened yet, so it waits for the agent rather than timing out.
+  const sticky = Boolean(message?.action);
+
   useEffect(() => {
-    if (!message) return;
-    // A toast carrying a WhatsApp link has to survive long enough to click.
-    const ms = message.action ? 15000 : 4000;
-    const timer = setTimeout(onDismiss, ms);
+    if (!message || sticky) return;
+    const timer = setTimeout(onDismiss, DISMISS_MS);
     return () => clearTimeout(timer);
-  }, [message, onDismiss]);
+  }, [message, sticky, onDismiss]);
 
   if (!message) return null;
+
+  const isError = message.tone === "error";
 
   return (
     <div
       role="status"
       aria-live="polite"
-      className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex justify-center px-4"
+      className="anim-panel fixed inset-x-4 bottom-24 z-50 mx-auto max-w-[420px] md:inset-x-auto md:bottom-6 md:right-6 md:mx-0 lg:bottom-24"
     >
       <div
-        className={`pointer-events-auto flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium shadow-lg ${
-          message.tone === "success"
-            ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-100"
-            : "border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-100"
-        }`}
+        className="flex items-center gap-3 rounded-[12px] px-4 py-3"
+        style={{
+          background: "var(--surface)",
+          boxShadow: "var(--shadow-pop)",
+          border: "1px solid var(--line)",
+        }}
       >
-        <span>{message.text}</span>
+        <p
+          className="t-small min-w-0 flex-1"
+          style={{ color: isError ? "var(--danger)" : "var(--ink)" }}
+        >
+          {message.text}
+        </p>
+
         {message.action ? (
           <a
             href={message.action.href}
             target="_blank"
             rel="noopener noreferrer"
-            className="shrink-0 underline underline-offset-2"
+            onClick={onDismiss}
+            className="t-small shrink-0 font-semibold underline underline-offset-2"
+            style={{ color: "var(--brass)" }}
           >
             {message.action.label}
           </a>
         ) : null}
+
         <button
           type="button"
           onClick={onDismiss}
-          className="shrink-0 opacity-60 hover:opacity-100"
           aria-label="Fermer"
+          className="t-small shrink-0"
+          style={{ color: "var(--ink-faint)" }}
         >
           ✕
         </button>

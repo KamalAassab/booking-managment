@@ -2,12 +2,9 @@
 
 import { useMemo } from "react";
 
+import { Check, Plus } from "@/components/icons";
 import { formatPhoneForDisplay } from "@/lib/phone";
-import {
-  minutesToLabel,
-  nowMinutesInSalonTz,
-  slotsForSalon,
-} from "@/lib/time";
+import { minutesToLabel, nowMinutesInSalonTz, slotsForSalon } from "@/lib/time";
 import type { BookingDTO, SalonDTO } from "@/lib/types";
 
 type Props = {
@@ -19,22 +16,25 @@ type Props = {
   onSelectBooking: (booking: BookingDTO) => void;
 };
 
-const STATUS_STYLES: Record<
-  Exclude<BookingDTO["status"], "cancelled">,
-  { card: string; dot: string; label: string }
-> = {
-  confirmed: {
-    card: "border-brand-300 bg-brand-50 dark:border-brand-800 dark:bg-brand-900/25",
-    dot: "bg-brand-500",
-    label: "Confirmé",
-  },
-  done: {
-    card: "border-emerald-300 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/30",
-    dot: "bg-emerald-500",
-    label: "Terminé",
-  },
-};
+/** Height of one slot row. The unit the whole grid is measured in. */
+const ROW_PX = 56;
+/** Width of the time rail. Fits "09:00" at 13px with room to breathe. */
+const RAIL_PX = 56;
 
+/**
+ * The day, drawn as a column that fills up.
+ *
+ * Bookings are placed by CSS Grid row arithmetic rather than absolute
+ * positioning, so height is proportional to duration by construction: a
+ * 90-minute coloration occupies exactly three times the rows of a 30-minute
+ * cut. The shape of the day is legible before a single word is read, which
+ * is the entire job of this screen.
+ *
+ * Status is carried by surface treatment, never by a badge — see
+ * docs/DESIGN.md §1. Cancelled bookings are not drawn at all, because the
+ * slot genuinely is free again; that is the same rule the database's
+ * exclusion constraint applies.
+ */
 export function DayGrid({
   salon,
   date,
@@ -45,8 +45,6 @@ export function DayGrid({
 }: Props) {
   const slots = useMemo(() => slotsForSalon(salon), [salon]);
 
-  // Cancelled bookings free their slot immediately — the same rule the
-  // database constraints use — so they are simply not drawn.
   const active = useMemo(
     () => bookings.filter((b) => b.status !== "cancelled"),
     [bookings],
@@ -75,9 +73,16 @@ export function DayGrid({
 
   const nowMin = date === today ? nowMinutesInSalonTz() : null;
 
+  // Fractional row offset of the live edge, so the rule sits at the true
+  // minute rather than snapping to the nearest half hour.
+  const nowOffset =
+    nowMin !== null && nowMin >= salon.opensAtMin && nowMin < salon.closesAtMin
+      ? ((nowMin - salon.opensAtMin) / salon.slotMin) * ROW_PX
+      : null;
+
   if (slots.length === 0) {
     return (
-      <p className="panel rounded-xl p-6 text-sm">
+      <p className="card p-5 text-[color:var(--ink-soft)]">
         Les horaires de ce salon ne définissent aucun créneau.
       </p>
     );
@@ -85,60 +90,97 @@ export function DayGrid({
 
   return (
     <div
-      className="panel overflow-hidden rounded-xl"
+      className="card relative overflow-hidden"
       role="grid"
       aria-label={`Créneaux du ${date}`}
     >
       <div
-        className="grid"
-        style={{ gridTemplateColumns: "4.75rem 1fr", gridAutoRows: "minmax(3.5rem, auto)" }}
+        className="relative grid"
+        style={{
+          gridTemplateColumns: `${RAIL_PX}px 1fr`,
+          gridAutoRows: `${ROW_PX}px`,
+        }}
       >
-        {slots.map((startMin, index) => {
-          const row = index + 1;
-          const booking = byStart.get(startMin);
-          const isCovered = covered.has(startMin);
+        {/* Rail and row lines. Drawn first so cards sit above them. */}
+        {slots.map((startMin, i) => {
           const isPast = nowMin !== null && startMin + salon.slotMin <= nowMin;
-          const isCurrent =
-            nowMin !== null &&
-            startMin <= nowMin &&
-            nowMin < startMin + salon.slotMin;
-
           return (
-            <div key={startMin} className="contents">
+            <div key={`r-${startMin}`} className="contents">
               <div
-                className="flex items-start justify-end border-t px-3 pt-3 text-xs font-medium tabular-nums"
+                className="t-small flex items-start justify-end pr-3 pt-2"
                 style={{
                   gridColumn: 1,
-                  gridRow: row,
-                  borderColor: "var(--panel-border)",
-                  color: isCurrent ? "var(--color-brand-600)" : "var(--text-muted)",
-                  fontWeight: isCurrent ? 700 : 500,
+                  gridRow: i + 1,
+                  color: "var(--ink-faint)",
+                  borderTop: i === 0 ? "none" : "1px solid var(--line)",
+                  opacity: isPast ? 0.55 : 1,
                 }}
               >
-                {minutesToLabel(startMin)}
+                <time dateTime={`${date}T${minutesToLabel(startMin)}`}>
+                  {minutesToLabel(startMin)}
+                </time>
               </div>
-
-              {isCovered ? null : booking ? (
-                <BookingCard
-                  booking={booking}
-                  row={row}
-                  span={Math.max(
-                    1,
-                    Math.ceil(booking.durationMin / salon.slotMin),
-                  )}
-                  onSelect={() => onSelectBooking(booking)}
-                />
-              ) : (
-                <FreeSlot
-                  row={row}
-                  isPast={isPast}
-                  label={minutesToLabel(startMin)}
-                  onSelect={() => onSelectSlot(startMin)}
-                />
-              )}
+              <div
+                style={{
+                  gridColumn: 2,
+                  gridRow: i + 1,
+                  borderTop: i === 0 ? "none" : "1px solid var(--line)",
+                  borderLeft: "1px solid var(--line)",
+                  background: isPast ? "var(--surface-sunk)" : "transparent",
+                }}
+              />
             </div>
           );
         })}
+
+        {/* Free slots and bookings, above the rules. */}
+        {slots.map((startMin, i) => {
+          const booking = byStart.get(startMin);
+          if (covered.has(startMin)) return null;
+
+          if (booking) {
+            return (
+              <BookingCard
+                key={booking.id}
+                booking={booking}
+                row={i + 1}
+                span={Math.max(
+                  1,
+                  Math.ceil(booking.durationMin / salon.slotMin),
+                )}
+                onSelect={() => onSelectBooking(booking)}
+              />
+            );
+          }
+
+          return (
+            <FreeSlot
+              key={`f-${startMin}`}
+              row={i + 1}
+              label={minutesToLabel(startMin)}
+              isPast={nowMin !== null && startMin + salon.slotMin <= nowMin}
+              onSelect={() => onSelectSlot(startMin)}
+            />
+          );
+        })}
+
+        {/* The live edge of the day. One of the two places brass appears. */}
+        {nowOffset !== null ? (
+          <div
+            className="pointer-events-none absolute right-0 flex items-center"
+            style={{ top: nowOffset, left: RAIL_PX - 4 }}
+            aria-hidden
+          >
+            <span
+              className="block h-1.5 w-1.5 rounded-full"
+              style={{ background: "var(--brass)" }}
+            />
+            <span
+              className="block h-px flex-1"
+              style={{ background: "var(--brass)", opacity: 0.45 }}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -146,33 +188,38 @@ export function DayGrid({
 
 function FreeSlot({
   row,
-  isPast,
   label,
+  isPast,
   onSelect,
 }: {
   row: number;
-  isPast: boolean;
   label: string;
+  isPast: boolean;
   onSelect: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onSelect}
-      className="group border-t border-l px-3 text-left text-sm transition"
-      style={{
-        gridColumn: 2,
-        gridRow: row,
-        borderColor: "var(--panel-border)",
-        background: isPast ? "var(--slot-past)" : "var(--slot-free)",
-      }}
+      // A real button, not a decorated div: keyboard-reachable and it
+      // announces itself.
+      className="group relative m-1 flex items-center gap-1.5 rounded-[10px] px-2.5 text-left transition-colors duration-[120ms] hover:bg-[color:var(--brass-tint)] focus-visible:bg-[color:var(--brass-tint)]"
+      style={{ gridColumn: 2, gridRow: row, opacity: isPast ? 0.55 : 1 }}
+      // Past slots stay clickable: entering a booking someone forgot at 6pm
+      // is a real thing a front desk does.
       aria-label={`Réserver le créneau de ${label}`}
     >
       <span
-        className="opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100"
-        style={{ color: "var(--text-muted)" }}
+        className="slot-mark transition-opacity duration-[120ms] group-hover:opacity-100 group-focus-visible:opacity-100"
+        style={{ color: "var(--brass)" }}
       >
-        + Réserver
+        <Plus size={16} />
+      </span>
+      <span
+        className="t-small opacity-0 transition-opacity duration-[120ms] group-hover:opacity-100 group-focus-visible:opacity-100"
+        style={{ color: "var(--brass)" }}
+      >
+        Réserver
       </span>
     </button>
   );
@@ -189,39 +236,91 @@ function BookingCard({
   span: number;
   onSelect: () => void;
 }) {
-  const style = STATUS_STYLES[booking.status as keyof typeof STATUS_STYLES];
+  const done = booking.status === "done";
 
   return (
     <button
       type="button"
       onClick={onSelect}
-      className={`m-1 flex flex-col items-start gap-0.5 rounded-lg border px-3 py-2 text-left transition hover:brightness-[0.98] ${style.card}`}
-      style={{ gridColumn: 2, gridRow: `${row} / span ${span}` }}
+      className="relative m-1 flex flex-col items-start overflow-hidden rounded-[10px] px-3 py-2 text-left transition-[background-color,border-color] duration-[120ms]"
+      style={{
+        gridColumn: 2,
+        gridRow: `${row} / span ${span}`,
+        background: done ? "var(--surface-sunk)" : "var(--surface)",
+        border: `1px solid var(--line)`,
+        // The leading rule is the confirmed state's whole signal. A finished
+        // booking loses it, so the day visibly recedes behind you.
+        borderLeft: done
+          ? "1px solid var(--line)"
+          : "3px solid var(--brass)",
+        paddingLeft: done ? 12 : 10,
+      }}
     >
-      <div className="flex w-full items-center gap-2">
-        <span className={`h-2 w-2 shrink-0 rounded-full ${style.dot}`} aria-hidden />
-        <span className="truncate text-sm font-semibold">
+      <span className="flex w-full items-center gap-1.5">
+        {done ? (
+          <span className="shrink-0" style={{ color: "var(--ink-faint)" }}>
+            <Check size={14} />
+          </span>
+        ) : null}
+        <span
+          className="truncate font-semibold"
+          style={{ color: done ? "var(--ink-soft)" : "var(--ink)" }}
+        >
           {booking.clientName}
         </span>
+
+        {/* A single-slot card is 56px tall and cannot hold four stacked
+            lines: the service used to be clipped mid-word. At this height
+            the service rides on the name's line instead, and the details
+            that do not fit are in the sheet a tap away. */}
+        {span === 1 ? (
+          <span
+            className="t-small min-w-0 flex-1 truncate"
+            style={{ color: "var(--ink-faint)" }}
+          >
+            · {booking.service}
+          </span>
+        ) : null}
+
         <span
-          className="ml-auto shrink-0 text-xs tabular-nums"
-          style={{ color: "var(--text-muted)" }}
+          className="t-small ml-auto shrink-0 pl-1"
+          style={{ color: "var(--ink-faint)" }}
+          data-nums
         >
           {booking.durationMin} min
         </span>
-      </div>
-      <span className="truncate text-xs" style={{ color: "var(--text-muted)" }}>
-        {booking.service} · {formatPhoneForDisplay(booking.clientPhone)}
       </span>
-      {booking.notes ? (
+
+      {span > 1 ? (
         <span
-          className="mt-0.5 line-clamp-2 text-xs italic"
-          style={{ color: "var(--text-muted)" }}
+          className="t-small w-full truncate"
+          style={{ color: "var(--ink-soft)" }}
+        >
+          {booking.service}
+        </span>
+      ) : null}
+
+      {span > 1 ? (
+        <span
+          className="t-small w-full truncate"
+          style={{ color: "var(--ink-faint)" }}
+          data-nums
+        >
+          {formatPhoneForDisplay(booking.clientPhone)}
+        </span>
+      ) : null}
+
+      {booking.notes && span > 2 ? (
+        <span
+          className="t-small mt-1 line-clamp-2 w-full"
+          style={{ color: "var(--ink-faint)" }}
         >
           {booking.notes}
         </span>
       ) : null}
-      <span className="sr-only">{style.label}</span>
+
+      {/* Status is visual; screen readers get it in words. */}
+      <span className="sr-only">{done ? "Terminé" : "Confirmé"}</span>
     </button>
   );
 }

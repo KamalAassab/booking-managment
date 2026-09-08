@@ -19,13 +19,13 @@ export function LoginForm({ initialRole }: { initialRole: "staff" | "owner" }) {
   const [state, formAction] = useActionState<ActionState, FormData>(login, {});
 
   return (
-    <form action={formAction} className="panel rounded-2xl p-6 shadow-sm">
+    <form action={formAction} className="card p-5 md:p-6">
       {/* One shared staff account and one owner account (brief §3), so the
           role toggle replaces a username field entirely — one less thing to
           type while a client waits on the phone. */}
       <div
-        className="mb-5 grid grid-cols-2 gap-1 rounded-xl p-1"
-        style={{ background: "var(--surface)" }}
+        className="mb-5 grid grid-cols-2 gap-0.5 rounded-full p-0.5"
+        style={{ background: "var(--surface-sunk)" }}
         role="radiogroup"
         aria-label="Type de compte"
       >
@@ -41,11 +41,13 @@ export function LoginForm({ initialRole }: { initialRole: "staff" | "owner" }) {
             role="radio"
             aria-checked={role === value}
             onClick={() => setRole(value)}
-            className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
-              role === value
-                ? "bg-brand-600 text-white shadow-sm"
-                : "hover:bg-black/5 dark:hover:bg-white/5"
-            }`}
+            className="min-h-[40px] rounded-full px-3 text-[14px] transition-colors duration-[120ms]"
+            style={{
+              background: role === value ? "var(--surface)" : "transparent",
+              boxShadow: role === value ? "var(--shadow-card)" : "none",
+              color: role === value ? "var(--ink)" : "var(--ink-soft)",
+              fontWeight: role === value ? 600 : 500,
+            }}
           >
             {label}
           </button>
@@ -63,20 +65,24 @@ export function LoginForm({ initialRole }: { initialRole: "staff" | "owner" }) {
         autoComplete="current-password"
         autoFocus
         required
-        className="field mb-4"
+        className="field"
         placeholder="••••••••"
+        aria-invalid={state.error ? true : undefined}
       />
 
       {state.error ? (
         <p
           role="alert"
-          className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700 dark:bg-red-950/40 dark:text-red-300"
+          className="t-small mt-3 rounded-[10px] px-3 py-2.5"
+          style={{ background: "var(--danger-tint)", color: "var(--danger)" }}
         >
           {state.error}
         </p>
       ) : null}
 
-      <SubmitButton />
+      <div className="mt-4">
+        <SubmitButton />
+      </div>
     </form>
   );
 }

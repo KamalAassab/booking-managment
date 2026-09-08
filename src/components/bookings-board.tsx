@@ -3,8 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { BookingDialog } from "@/components/booking-dialog";
+import { BookingSheet } from "@/components/booking-sheet";
 import { DayGrid } from "@/components/day-grid";
+import { DayStrip } from "@/components/day-strip";
+import { ChevronLeft, ChevronRight, Plus, Power } from "@/components/icons";
+import { SalonSwitcher, shortName } from "@/components/salon-switcher";
 import { Toast, type ToastMessage } from "@/components/toast";
 import { logout } from "@/app/actions/auth";
 import {
@@ -51,9 +54,6 @@ export function BookingsBoard({
   role,
 }: Props) {
   const router = useRouter();
-  // The page remounts this component on every salon/day change (see the
-  // `key` in bookings/page.tsx), so the server render is always the starting
-  // point and there is no stale-props effect to keep in sync.
   const [bookings, setBookings] = useState(initialBookings);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [mode, setDeviceMode] = useDeviceMode();
@@ -61,12 +61,7 @@ export function BookingsBoard({
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const today = todayInSalonTz();
 
-  // ── Device preferences ────────────────────────────────────────────────
   useEffect(() => {
-    // A front desk always opens on its own salon. Only redirect when the URL
-    // was not asked for explicitly, which the server guarantees by always
-    // writing ?salon= — so we compare against the remembered value and only
-    // act on the very first load of the session.
     const remembered = readSalonPreference();
     if (
       remembered &&
@@ -77,7 +72,6 @@ export function BookingsBoard({
       window.sessionStorage.setItem("atelier.salon.applied", "1");
       router.replace(`/bookings?salon=${remembered}&date=${date}`);
     }
-    // Intentionally first-mount only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -89,7 +83,6 @@ export function BookingsBoard({
     [router, salon.slug],
   );
 
-  // ── Live updates ──────────────────────────────────────────────────────
   const refetch = useCallback(async () => {
     try {
       const res = await fetch(
@@ -104,17 +97,12 @@ export function BookingsBoard({
       const data = (await res.json()) as { bookings: BookingDTO[] };
       setBookings(data.bookings);
     } catch {
-      // The stream will catch us up; a failed manual refetch is not worth a
-      // message to a user who is mid-call.
+      // The next poll catches us up; a failed manual refetch is not worth a
+      // message to someone who is mid-call.
     }
   }, [salon.slug, date, router]);
 
   useEffect(() => {
-    // Poll a two-number change watermark and refetch the day only when it
-    // moves. This replaced a Server-Sent Events stream: see the comment in
-    // src/app/api/bookings/watermark/route.ts for why that design could not
-    // survive on Vercel. Perceived latency is unchanged — the stream polled
-    // the same query server-side, once a second, per connection.
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let lastWatermark: string | null = null;
@@ -127,7 +115,6 @@ export function BookingsBoard({
 
     const poll = async () => {
       if (cancelled) return;
-      // Nobody is looking; do not spend a request or wake the database.
       if (document.visibilityState !== "visible") return schedule(POLL_IDLE_MS);
 
       try {
@@ -153,9 +140,9 @@ export function BookingsBoard({
       } catch {
         consecutiveFailures += 1;
         if (consecutiveFailures >= 2) setStream("offline");
-        // Back off rather than hammering a database that is already
-        // struggling; capped so recovery is still quick once it returns.
-        schedule(Math.min(POLL_MS * 2 ** consecutiveFailures, POLL_MAX_BACKOFF_MS));
+        schedule(
+          Math.min(POLL_MS * 2 ** consecutiveFailures, POLL_MAX_BACKOFF_MS),
+        );
       }
     };
 
@@ -164,8 +151,6 @@ export function BookingsBoard({
         setStream("offline");
         return;
       }
-      // Coming back to the tab: catch up straight away rather than waiting
-      // out whatever remained of the interval.
       if (timer) clearTimeout(timer);
       consecutiveFailures = 0;
       void refetch();
@@ -182,8 +167,6 @@ export function BookingsBoard({
     };
   }, [salon.slug, date, refetch, router]);
 
-  // Same-browser tabs (screen A and a second window) update instantly rather
-  // than waiting up to a second for the stream to notice.
   const channelRef = useRef<BroadcastChannel | null>(null);
   useEffect(() => {
     if (typeof BroadcastChannel === "undefined") return;
@@ -204,146 +187,234 @@ export function BookingsBoard({
     void refetch();
   }, [salon.slug, date, refetch]);
 
-  const activeBookings = useMemo(
-    () => bookings.filter((b) => b.status !== "cancelled"),
+  const activeCount = useMemo(
+    () => bookings.filter((b) => b.status !== "cancelled").length,
     [bookings],
   );
 
-  const bookedCount = activeBookings.length;
+  /** The first free slot, so the primary action always has somewhere to go. */
+  const firstFreeSlot = useMemo(() => {
+    const taken = new Set<number>();
+    for (const b of bookings) {
+      if (b.status === "cancelled") continue;
+      for (
+        let t = b.startMin;
+        t < b.startMin + b.durationMin;
+        t += salon.slotMin
+      ) {
+        taken.add(t);
+      }
+    }
+    for (let t = salon.opensAtMin; t < salon.closesAtMin; t += salon.slotMin) {
+      if (!taken.has(t)) return t;
+    }
+    return salon.opensAtMin;
+  }, [bookings, salon]);
 
   return (
-    <div className="flex min-h-full flex-1 flex-col">
-      <header
-        className="sticky top-0 z-20 border-b backdrop-blur"
-        style={{
-          background: "color-mix(in srgb, var(--panel) 92%, transparent)",
-          borderColor: "var(--panel-border)",
-        }}
+    <div className="flex min-h-dvh flex-col lg:flex-row">
+      {/* ---- Sidebar: desktop only ------------------------------------ */}
+      <aside
+        className="hidden w-[200px] shrink-0 flex-col gap-6 border-r p-5 lg:sticky lg:top-0 lg:flex lg:h-dvh"
+        style={{ borderColor: "var(--line)", background: "var(--surface)" }}
       >
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3">
-          <div className="mr-auto flex items-baseline gap-3">
-            <span className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-600">
-              Atelier
-            </span>
-            <span
-              className="text-xs font-medium"
-              style={{ color: "var(--text-muted)" }}
-            >
-              Planning
-            </span>
-          </div>
+        <div>
+          <p className="t-title">Atelier</p>
+          <p className="t-small" style={{ color: "var(--ink-faint)" }}>
+            Planning
+          </p>
+        </div>
 
-          <StreamBadge state={stream} />
+        <SalonSwitcher
+          salons={salons}
+          current={salon.slug}
+          onSelect={(slug) => navigate(slug, date)}
+          variant="list"
+        />
 
+        <div className="mt-auto flex flex-col gap-1">
           <ModeSwitch mode={mode} onChange={setDeviceMode} />
-
           {role === "owner" ? (
-            <a href="/owner" className="btn-ghost !px-3 !py-1.5 text-xs">
+            <a
+              href="/owner"
+              className="rounded-[10px] px-3 py-2.5 text-[13px] transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
+              style={{ color: "var(--ink-soft)" }}
+            >
               Espace propriétaire
             </a>
           ) : null}
-
           <form action={logout}>
-            <button type="submit" className="btn-ghost !px-3 !py-1.5 text-xs">
+            <button
+              type="submit"
+              className="flex w-full items-center gap-2 rounded-[10px] px-3 py-2.5 text-left text-[13px] transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
+              style={{ color: "var(--ink-soft)" }}
+            >
+              <Power size={16} />
               Déconnexion
             </button>
           </form>
         </div>
+      </aside>
 
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-3 gap-y-3 px-4 pb-3">
-          <nav
-            className="flex flex-wrap gap-1 rounded-xl p-1"
-            style={{ background: "var(--surface)" }}
-            aria-label="Salon"
-          >
-            {salons.map((s) => (
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* ---- Header ------------------------------------------------- */}
+        <header
+          className="sticky top-0 z-20 border-b px-4 pt-3 md:px-6 lg:px-8"
+          style={{
+            borderColor: "var(--line)",
+            background: "color-mix(in srgb, var(--surface) 94%, transparent)",
+            backdropFilter: "blur(8px)",
+          }}
+        >
+          <div className="mx-auto flex max-w-[720px] flex-col gap-3">
+            <div className="flex items-center gap-3 lg:hidden">
+              <p className="t-title mr-auto">Atelier</p>
+              <LiveDot state={stream} />
+              <form action={logout}>
+                <button
+                  type="submit"
+                  className="flex h-9 w-9 items-center justify-center rounded-[10px]"
+                  style={{ color: "var(--ink-soft)" }}
+                  aria-label="Déconnexion"
+                >
+                  <Power size={18} />
+                </button>
+              </form>
+            </div>
+
+            <div className="lg:hidden">
+              <SalonSwitcher
+                salons={salons}
+                current={salon.slug}
+                onSelect={(slug) => navigate(slug, date)}
+              />
+            </div>
+
+            <div className="flex items-baseline gap-3">
+              <div className="min-w-0 flex-1">
+                <h1 className="t-title">
+                  <span className="first-letter:uppercase">
+                    {formatLongDate(date)}
+                  </span>
+                </h1>
+                <p className="t-small" style={{ color: "var(--ink-faint)" }}>
+                  <span className="hidden lg:inline">
+                    {shortName(salon.name)} ·{" "}
+                  </span>
+                  <span data-nums>{activeCount}</span> rendez-vous
+                  {date === today ? " · aujourd'hui" : ""}
+                </p>
+              </div>
+
+              <div className="hidden items-center gap-1 lg:flex">
+                <LiveDot state={stream} />
+              </div>
+
+              {/* The arrows are desktop-only: on a phone the day strip below
+                  already moves between days, and duplicating it here was what
+                  squeezed the date into "mardi 8 septem…". */}
+              <div className="hidden items-center gap-0.5 lg:flex">
+                <IconButton
+                  label="Jour précédent"
+                  onClick={() => navigate(salon.slug, addDays(date, -1))}
+                >
+                  <ChevronLeft size={18} />
+                </IconButton>
+                <IconButton
+                  label="Jour suivant"
+                  onClick={() => navigate(salon.slug, addDays(date, 1))}
+                >
+                  <ChevronRight size={18} />
+                </IconButton>
+              </div>
+
+              {/* Only offered when it would do something. */}
+              {date !== today ? (
+                <button
+                  type="button"
+                  onClick={() => navigate(salon.slug, today)}
+                  className="t-small shrink-0 rounded-[8px] px-2.5 py-1.5 transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
+                  style={{ color: "var(--brass)" }}
+                >
+                  Aujourd&apos;hui
+                </button>
+              ) : null}
+            </div>
+
+            <div className="flex items-center gap-3 pb-3">
+              <div className="min-w-0 flex-1">
+                <DayStrip
+                  date={date}
+                  today={today}
+                  onSelect={(d) => navigate(salon.slug, d)}
+                />
+              </div>
               <button
-                key={s.slug}
                 type="button"
-                onClick={() => navigate(s.slug, date)}
-                aria-current={s.slug === salon.slug ? "page" : undefined}
-                className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition ${
-                  s.slug === salon.slug
-                    ? "bg-brand-600 text-white shadow-sm"
-                    : "hover:bg-black/5 dark:hover:bg-white/5"
-                }`}
+                onClick={() =>
+                  setDialog({ kind: "create", startMin: firstFreeSlot })
+                }
+                className="btn-primary btn-sm hidden shrink-0 lg:inline-flex"
               >
-                {s.name.replace(/^L'Atelier /, "")}
+                <Plus size={16} />
+                Nouveau
               </button>
-            ))}
-          </nav>
+            </div>
+          </div>
+        </header>
 
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => navigate(salon.slug, addDays(date, -1))}
-              className="btn-ghost !px-3 !py-1.5"
-              aria-label="Jour précédent"
-            >
-              ←
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate(salon.slug, today)}
-              className="btn-ghost !px-3 !py-1.5 text-xs"
-              disabled={date === today}
-            >
-              Aujourd&apos;hui
-            </button>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => {
-                if (e.target.value) navigate(salon.slug, e.target.value);
-              }}
-              className="field !w-auto !py-1.5 text-sm"
-              aria-label="Date"
+        {/* ---- Grid --------------------------------------------------- */}
+        <main className="flex-1 px-4 pb-28 pt-4 md:px-6 lg:px-8 lg:pb-10">
+          <div className="mx-auto max-w-[720px]">
+            <DayGrid
+              salon={salon}
+              date={date}
+              today={today}
+              bookings={bookings}
+              onSelectSlot={(startMin) => setDialog({ kind: "create", startMin })}
+              onSelectBooking={(booking) => setDialog({ kind: "edit", booking })}
             />
-            <button
-              type="button"
-              onClick={() => navigate(salon.slug, addDays(date, 1))}
-              className="btn-ghost !px-3 !py-1.5"
-              aria-label="Jour suivant"
-            >
-              →
-            </button>
-          </div>
-        </div>
-      </header>
 
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
-        <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">
-              {salon.name}
-            </h1>
-            <p className="mt-0.5 text-sm" style={{ color: "var(--text-muted)" }}>
-              <span className="first-letter:uppercase">
-                {formatLongDate(date)}
-              </span>
-              {date === today ? " · aujourd'hui" : ""}
-            </p>
+            {activeCount === 0 ? (
+              <p
+                className="t-small mt-4 text-center"
+                style={{ color: "var(--ink-faint)" }}
+              >
+                Aucun rendez-vous. Touchez un créneau pour en ajouter un.
+              </p>
+            ) : null}
           </div>
-          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-            <span className="font-semibold" style={{ color: "var(--text)" }}>
-              {bookedCount}
-            </span>{" "}
-            rendez-vous
+
+          {/* Live changes arriving from another device are announced rather
+              than appearing silently. */}
+          <p aria-live="polite" className="sr-only">
+            {activeCount} rendez-vous ce jour.
           </p>
-        </div>
+        </main>
+      </div>
 
-        <DayGrid
-          salon={salon}
-          date={date}
-          today={today}
-          bookings={bookings}
-          onSelectSlot={(startMin) => setDialog({ kind: "create", startMin })}
-          onSelectBooking={(booking) => setDialog({ kind: "edit", booking })}
-        />
-      </main>
+      {/* ---- Action bar: mobile, under the thumb ---------------------- */}
+      <div
+        className="fixed inset-x-0 bottom-0 z-20 border-t px-4 py-3 lg:hidden"
+        style={{
+          borderColor: "var(--line)",
+          background: "color-mix(in srgb, var(--surface) 94%, transparent)",
+          backdropFilter: "blur(8px)",
+          paddingBottom: "max(12px, env(safe-area-inset-bottom))",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setDialog({ kind: "create", startMin: firstFreeSlot })}
+          className="btn-primary w-full"
+        >
+          <Plus size={18} />
+          Nouveau rendez-vous
+        </button>
+      </div>
 
       {dialog ? (
-        <BookingDialog
+        <BookingSheet
           state={dialog}
           salon={salon}
           date={date}
@@ -360,22 +431,48 @@ export function BookingsBoard({
   );
 }
 
-function StreamBadge({ state }: { state: StreamState }) {
+function IconButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      className="flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
+      style={{ color: "var(--ink-soft)" }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function LiveDot({ state }: { state: StreamState }) {
   const map = {
-    live: { label: "En direct", color: "bg-emerald-500" },
-    connecting: { label: "Connexion…", color: "bg-amber-500" },
-    offline: { label: "Hors ligne", color: "bg-ink-400" },
+    live: { label: "En direct", color: "var(--brass)" },
+    connecting: { label: "Connexion", color: "var(--ink-faint)" },
+    offline: { label: "Hors ligne", color: "var(--ink-faint)" },
   } as const;
   const { label, color } = map[state];
 
   return (
     <span
-      className="inline-flex items-center gap-1.5 text-xs font-medium"
-      style={{ color: "var(--text-muted)" }}
-      aria-live="polite"
+      className="t-small inline-flex items-center gap-1.5"
+      style={{ color: "var(--ink-faint)" }}
+      title={label}
     >
-      <span className={`h-2 w-2 rounded-full ${color}`} aria-hidden />
-      {label}
+      <span
+        className="block h-1.5 w-1.5 rounded-full"
+        style={{ background: color, opacity: state === "live" ? 1 : 0.5 }}
+        aria-hidden
+      />
+      <span className="hidden sm:inline">{label}</span>
     </span>
   );
 }
@@ -389,12 +486,11 @@ function ModeSwitch({
 }) {
   return (
     <div
-      className="flex gap-0.5 rounded-lg p-0.5 text-xs"
-      style={{ background: "var(--surface)" }}
       role="radiogroup"
       aria-label="Type de poste"
-      title="Un poste centre d'appels ouvre WhatsApp pré-rempli après chaque réservation."
+      className="mb-2 flex flex-col gap-0.5"
     >
+      <span className="label mb-1.5">Poste</span>
       {(
         [
           ["front_desk", "Réception"],
@@ -407,12 +503,20 @@ function ModeSwitch({
           role="radio"
           aria-checked={mode === value}
           onClick={() => onChange(value)}
-          className={`rounded-md px-2.5 py-1 font-semibold transition ${
-            mode === value
-              ? "bg-brand-600 text-white"
-              : "hover:bg-black/5 dark:hover:bg-white/5"
-          }`}
+          className="flex items-center gap-2 rounded-[10px] px-3 py-2 text-left text-[13px] transition-colors duration-[120ms]"
+          style={{
+            background: mode === value ? "var(--surface-sunk)" : "transparent",
+            color: mode === value ? "var(--ink)" : "var(--ink-soft)",
+            fontWeight: mode === value ? 600 : 400,
+          }}
         >
+          <span
+            className="block h-1.5 w-1.5 shrink-0 rounded-full"
+            style={{
+              background: mode === value ? "var(--brass)" : "var(--line-strong)",
+            }}
+            aria-hidden
+          />
           {label}
         </button>
       ))}

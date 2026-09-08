@@ -1,5 +1,7 @@
 import { logout } from "@/app/actions/auth";
+import { ChevronLeft, ChevronRight, Check, Power } from "@/components/icons";
 import { OwnerPasswordForms } from "@/components/owner-password-forms";
+import { salonColor, shortName } from "@/components/salon-switcher";
 import type { Booking, Salon } from "@/db/schema";
 import { requireOwner } from "@/lib/auth";
 import { listBookingsForSalons, listSalons } from "@/lib/bookings";
@@ -41,153 +43,203 @@ export default async function OwnerPage({ searchParams }: PageProps<"/owner">) {
   const salonWhatsApp = salonWhatsAppNumber();
 
   return (
-    <div className="flex min-h-full flex-1 flex-col">
+    <div className="flex min-h-dvh flex-col">
       <header
-        className="border-b"
-        style={{ background: "var(--panel)", borderColor: "var(--panel-border)" }}
+        className="sticky top-0 z-20 border-b"
+        style={{
+          borderColor: "var(--line)",
+          background: "color-mix(in srgb, var(--surface) 94%, transparent)",
+          backdropFilter: "blur(8px)",
+        }}
       >
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-3">
-          <div className="mr-auto flex items-baseline gap-3">
-            <span className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-600">
-              Atelier
-            </span>
-            <span className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>
+        <div className="mx-auto flex max-w-[1180px] items-center gap-3 px-4 py-3 md:px-6">
+          <div className="mr-auto">
+            <p className="t-title">Atelier</p>
+            <p className="t-small" style={{ color: "var(--ink-faint)" }}>
               Espace propriétaire
-            </span>
+            </p>
           </div>
-          <a href="/bookings" className="btn-ghost !px-3 !py-1.5 text-xs">
+          <a
+            href="/bookings"
+            className="t-small rounded-[8px] px-2.5 py-2 transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
+            style={{ color: "var(--ink-soft)" }}
+          >
             Planning
           </a>
           <form action={logout}>
-            <button type="submit" className="btn-ghost !px-3 !py-1.5 text-xs">
-              Déconnexion
+            <button
+              type="submit"
+              className="flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
+              style={{ color: "var(--ink-soft)" }}
+              aria-label="Déconnexion"
+            >
+              <Power size={18} />
             </button>
           </form>
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">
+      <main className="mx-auto w-full max-w-[1180px] flex-1 px-4 py-6 md:px-6 md:py-8">
+        {/* ---- The three salons -------------------------------------- */}
         <section className="mb-10">
           <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
             <div>
-              <h1 className="text-xl font-semibold tracking-tight">
-                Les trois salons
-              </h1>
-              <p className="mt-0.5 text-sm" style={{ color: "var(--text-muted)" }}>
+              <h1 className="t-title">
                 <span className="first-letter:uppercase">
                   {formatLongDate(date)}
-                </span>{" "}
-                · {active.length} rendez-vous
+                </span>
+              </h1>
+              <p className="t-small" style={{ color: "var(--ink-faint)" }}>
+                <span data-nums>{active.length}</span> rendez-vous sur les trois
+                salons
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-0.5">
               <a
                 href={`/owner?date=${addDays(date, -1)}`}
-                className="btn-ghost !px-3 !py-1.5"
+                className="flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
+                style={{ color: "var(--ink-soft)" }}
                 aria-label="Jour précédent"
               >
-                ←
+                <ChevronLeft size={18} />
               </a>
-              <a href={`/owner?date=${todayInSalonTz()}`} className="btn-ghost !px-3 !py-1.5 text-xs">
+              <a
+                href={`/owner?date=${todayInSalonTz()}`}
+                className="t-small rounded-[8px] px-2.5 py-1.5 transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
+                style={{ color: "var(--ink-soft)" }}
+              >
                 Aujourd&apos;hui
               </a>
               <a
                 href={`/owner?date=${addDays(date, 1)}`}
-                className="btn-ghost !px-3 !py-1.5"
+                className="flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
+                style={{ color: "var(--ink-soft)" }}
                 aria-label="Jour suivant"
               >
-                →
+                <ChevronRight size={18} />
               </a>
             </div>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-3">
+          {/* One column per salon at xl; a single stack below, which is what
+              a phone can actually show. */}
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {salons.map((salon) => {
               const rows = active
                 .filter((b) => b.salonId === salon.id)
                 .sort((a, b) => a.startMin - b.startMin);
 
               return (
-                <div key={salon.id} className="panel rounded-xl p-4">
-                  <div className="mb-3 flex items-baseline justify-between gap-2">
-                    <h2 className="text-sm font-semibold">{salon.name}</h2>
+                <section key={salon.id} className="card p-4">
+                  <div className="mb-3 flex items-center gap-2">
                     <span
-                      className="text-xs tabular-nums"
-                      style={{ color: "var(--text-muted)" }}
+                      className="block h-1.5 w-1.5 shrink-0 rounded-full"
+                      style={{ background: salonColor(salon.slug) }}
+                      aria-hidden
+                    />
+                    <h2 className="t-heading mr-auto truncate">
+                      {shortName(salon.name)}
+                    </h2>
+                    <span
+                      className="t-small"
+                      style={{ color: "var(--ink-faint)" }}
+                      data-nums
                     >
                       {rows.length}
                     </span>
                   </div>
 
                   {rows.length === 0 ? (
-                    <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+                    <p className="t-small" style={{ color: "var(--ink-faint)" }}>
                       Aucun rendez-vous.
                     </p>
                   ) : (
-                    <ul className="space-y-2">
-                      {rows.map((b) => (
+                    <ul className="flex flex-col">
+                      {rows.map((b, i) => (
                         <li
                           key={b.id}
-                          className="flex items-baseline gap-3 rounded-lg px-2 py-1.5 text-sm"
-                          style={{ background: "var(--surface)" }}
+                          className="flex items-baseline gap-3 py-2"
+                          style={{
+                            borderTop:
+                              i === 0 ? "none" : "1px solid var(--line)",
+                          }}
                         >
-                          <span className="w-11 shrink-0 font-semibold tabular-nums">
+                          <time
+                            className="w-11 shrink-0 font-semibold"
+                            style={{
+                              color:
+                                b.status === "done"
+                                  ? "var(--ink-faint)"
+                                  : "var(--ink)",
+                            }}
+                          >
                             {minutesToLabel(b.startMin)}
-                          </span>
+                          </time>
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate font-medium">
+                            <span
+                              className="flex items-center gap-1.5 truncate font-semibold"
+                              style={{
+                                color:
+                                  b.status === "done"
+                                    ? "var(--ink-soft)"
+                                    : "var(--ink)",
+                              }}
+                            >
+                              {b.status === "done" ? (
+                                <span style={{ color: "var(--ink-faint)" }}>
+                                  <Check size={14} />
+                                </span>
+                              ) : null}
                               {b.clientName}
                             </span>
                             <span
-                              className="block truncate text-xs"
-                              style={{ color: "var(--text-muted)" }}
+                              className="t-small block truncate"
+                              style={{ color: "var(--ink-faint)" }}
                             >
                               {b.service} ·{" "}
-                              {formatPhoneForDisplay(b.clientPhone)}
+                              <span data-nums>
+                                {formatPhoneForDisplay(b.clientPhone)}
+                              </span>
                             </span>
                           </span>
-                          {b.status === "done" ? (
-                            <span className="shrink-0 text-xs text-emerald-600 dark:text-emerald-400">
-                              ✓
-                            </span>
-                          ) : null}
                         </li>
                       ))}
                     </ul>
                   )}
-                </div>
+                </section>
               );
             })}
           </div>
         </section>
 
+        {/* ---- WhatsApp number --------------------------------------- */}
         <section className="mb-10">
-          <h2 className="mb-1 text-xl font-semibold tracking-tight">
-            Numéro WhatsApp du salon
-          </h2>
-          <p className="mb-4 text-sm" style={{ color: "var(--text-muted)" }}>
+          <h2 className="t-heading mb-1">Numéro WhatsApp du salon</h2>
+          <p className="t-small mb-3" style={{ color: "var(--ink-soft)" }}>
             Les confirmations partent de ce numéro. Chaque poste du centre
             d&apos;appels doit y être relié comme appareil lié (WhatsApp →
-            Réglages → Appareils liés), sinon le lien pré-rempli s&apos;ouvre
-            sans compte connecté.
+            Réglages → Appareils liés).
           </p>
-          <div className="panel inline-flex items-baseline gap-3 rounded-xl px-4 py-3">
-            <span className="text-lg font-semibold tabular-nums">
+          <div className="card inline-flex items-baseline gap-3 px-4 py-3">
+            <span className="t-heading" data-nums>
               {salonWhatsApp.display}
             </span>
-            <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+            <span
+              className="t-small"
+              style={{ color: "var(--ink-faint)" }}
+              data-nums
+            >
               {salonWhatsApp.e164}
             </span>
           </div>
         </section>
 
+        {/* ---- Passwords -------------------------------------------- */}
         <section>
-          <h2 className="mb-1 text-xl font-semibold tracking-tight">
-            Mots de passe
-          </h2>
-          <p className="mb-4 text-sm" style={{ color: "var(--text-muted)" }}>
-            Le personnel partage un seul compte. Changez son mot de passe si un
-            employé quitte le groupe, puis communiquez-le aux équipes.
+          <h2 className="t-heading mb-1">Mots de passe</h2>
+          <p className="t-small mb-4" style={{ color: "var(--ink-soft)" }}>
+            Le personnel partage un seul compte. Changez son mot de passe quand
+            quelqu&apos;un quitte le groupe, puis communiquez-le aux équipes.
           </p>
           <OwnerPasswordForms />
         </section>

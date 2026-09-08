@@ -1,148 +1,387 @@
 @import "tailwindcss";
+@import "./fonts.css";
 
 /*
- * Deliberately no webfont. A front desk with a flaky connection should never
- * see a blank or reflowing screen, and dropping next/font also removes a
- * build-time network dependency on Google Fonts.
+ * Token layer. Every value here is specified in docs/DESIGN.md; this file is
+ * the implementation, not the argument. If the two disagree, the doc is the
+ * intent and this is the bug.
  */
+
 @theme {
-  --font-sans:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
-    Arial, sans-serif;
-  --font-mono:
-    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono",
-    monospace;
+  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, sans-serif;
 
-  /* Warm brass accent against a cool ink base — reads as the salon brand
-     without competing with the status colours in the grid. */
-  --color-brand-50: #fbf7ef;
-  --color-brand-100: #f4ead3;
-  --color-brand-200: #e8d3a4;
-  --color-brand-300: #d9b76c;
-  --color-brand-400: #cb9f45;
-  --color-brand-500: #b7862c;
-  --color-brand-600: #9a6b23;
-  --color-brand-700: #7b5220;
-  --color-brand-800: #674321;
-  --color-brand-900: #593a20;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
 
-  --color-ink-50: #f6f7f9;
-  --color-ink-100: #ebedf1;
-  --color-ink-200: #d3d8e0;
-  --color-ink-300: #adb6c4;
-  --color-ink-400: #808ea3;
-  --color-ink-500: #607088;
-  --color-ink-600: #4c5a70;
-  --color-ink-700: #3f4a5c;
-  --color-ink-800: #37404e;
-  --color-ink-900: #1c222c;
-  --color-ink-950: #12161d;
+  --breakpoint-md: 40rem;
+  --breakpoint-lg: 64rem;
+  --breakpoint-xl: 80rem;
 }
 
 :root {
-  --surface: var(--color-ink-50);
-  --panel: #ffffff;
-  --panel-border: var(--color-ink-200);
-  --text: var(--color-ink-900);
-  --text-muted: var(--color-ink-500);
-  --slot-free: #ffffff;
-  --slot-free-hover: var(--color-brand-50);
-  --slot-past: var(--color-ink-100);
+  color-scheme: light;
+
+  /* Neutrals carry a green-grey cast, not blue: against brass a blue-grey
+     reads cold and corporate, this reads as paper. */
+  --paper: #fbfbfa;
+  --surface: #ffffff;
+  --surface-sunk: #f4f5f4;
+  --line: #e4e7e5;
+  --line-strong: #cfd4d1;
+  --ink: #14181a;
+  --ink-soft: #5a6570;
+  --ink-faint: #8b959b;
+
+  /* The only warm thing in the interface. At most twice per screen. */
+  --brass: #a87f2e;
+  --brass-hover: #8e6b25;
+  --brass-tint: #faf5e9;
+
+  --danger: #a93b33;
+  --danger-tint: #fcf2f1;
+
+  /* Used only where salons are compared — never inside one salon's grid,
+     where a constant colour would carry nothing. */
+  --salon-vip: #6b4e71;
+  --salon-gold: #a87f2e;
+  --salon-barber: #3e6b70;
+
+  --shadow-card: 0 1px 2px rgb(20 24 26 / 0.04), 0 1px 1px rgb(20 24 26 / 0.03);
+  --shadow-sheet: 0 -8px 32px rgb(20 24 26 / 0.12);
+  --shadow-pop: 0 8px 32px rgb(20 24 26 / 0.12);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --surface: var(--color-ink-950);
-    --panel: #1a2029;
-    --panel-border: #2c3542;
-    --text: var(--color-ink-50);
-    --text-muted: var(--color-ink-400);
-    --slot-free: #1a2029;
-    --slot-free-hover: #24303d;
-    --slot-past: #161c24;
+    color-scheme: dark;
+
+    --paper: #101315;
+    --surface: #181c1f;
+    --surface-sunk: #0b0d0f;
+    --line: #282d31;
+    --line-strong: #39403f;
+    --ink: #f2f4f3;
+    --ink-soft: #98a3a8;
+    --ink-faint: #6b7478;
+
+    --brass: #c89a3f;
+    --brass-hover: #d8ac52;
+    --brass-tint: #2a2317;
+
+    --danger: #e8908a;
+    --danger-tint: #2b1917;
+
+    --salon-vip: #b99cc0;
+    --salon-gold: #d6b26b;
+    --salon-barber: #8fbdc1;
+
+    /* Shadows do not read on a dark ground; a hairline does the same job
+       honestly, so elevation is expressed as a border instead. */
+    --shadow-card: none;
+    --shadow-sheet: 0 -8px 32px rgb(0 0 0 / 0.5);
+    --shadow-pop: 0 8px 32px rgb(0 0 0 / 0.5);
   }
 }
 
 @layer base {
+  * {
+    min-width: 0;
+  }
+
   html {
-    color-scheme: light dark;
+    -webkit-text-size-adjust: 100%;
   }
 
   body {
-    background: var(--surface);
-    color: var(--text);
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.47;
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
 
-  /* Every control in this app is used dozens of times a day at speed — the
-     focus ring has to be unmistakable, including for keyboard-only use. */
+  /* Times, durations and dates align on the colon everywhere, so a column of
+     them scans as a rail rather than as text to be read one by one. */
+  time,
+  [data-nums] {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  /* Used dozens of times a day at speed, including keyboard-only. Never
+     removed, never replaced with a colour change alone. */
   :focus-visible {
-    outline: 2px solid var(--color-brand-500);
+    outline: 2px solid var(--brass);
     outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: var(--brass-tint);
+    color: var(--ink);
   }
 }
 
 @layer components {
-  .panel {
-    background: var(--panel);
-    border: 1px solid var(--panel-border);
+  /* ---- Surfaces ---------------------------------------------------- */
+
+  .card {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
   }
 
-  .field {
-    @apply w-full rounded-lg border px-3 py-2.5 text-[15px] outline-none transition;
-    background: var(--panel);
-    border-color: var(--panel-border);
-    color: var(--text);
+  @media (prefers-color-scheme: dark) {
+    .card {
+      border: 1px solid var(--line);
+    }
   }
 
-  .field::placeholder {
-    color: var(--text-muted);
+  /* ---- Type -------------------------------------------------------- */
+
+  .t-display {
+    font-family: var(--font-display);
+    font-size: 28px;
+    line-height: 32px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
   }
 
-  .label {
-    @apply mb-1.5 block text-xs font-semibold uppercase tracking-wider;
-    color: var(--text-muted);
+  .t-title {
+    font-family: var(--font-display);
+    font-size: 20px;
+    line-height: 26px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
   }
 
-  /* Tailwind v4 cannot @apply a class defined in @layer components, so the
-     shared button base is written once here and shared by selector list
-     rather than by composition. */
+  .t-heading {
+    font-size: 16px;
+    line-height: 22px;
+    font-weight: 600;
+  }
+
+  .t-small {
+    font-size: 13px;
+    line-height: 18px;
+  }
+
+  /* The only uppercase in the interface — a labelling device, not a
+     decorative one. */
+  .t-micro {
+    font-size: 11px;
+    line-height: 14px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  /* ---- Button ------------------------------------------------------ */
+
   .btn,
   .btn-primary,
-  .btn-ghost,
+  .btn-quiet,
   .btn-danger {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5
-      text-sm font-semibold transition disabled:cursor-not-allowed
-      disabled:opacity-50;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 0 18px;
+    border-radius: var(--radius-md);
+    font-size: 15px;
+    font-weight: 600;
+    white-space: nowrap;
+    transition:
+      background-color 120ms ease-out,
+      border-color 120ms ease-out,
+      opacity 120ms ease-out;
+  }
+
+  .btn:disabled,
+  .btn-primary:disabled,
+  .btn-quiet:disabled,
+  .btn-danger:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .btn-sm {
+    min-height: 36px;
+    padding: 0 12px;
+    font-size: 13px;
   }
 
   .btn-primary {
-    @apply bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800;
+    background: var(--brass);
+    color: #fff;
   }
 
-  .btn-ghost {
-    @apply border;
-    border-color: var(--panel-border);
-    color: var(--text);
+  @media (prefers-color-scheme: dark) {
+    .btn-primary {
+      color: #14181a;
+    }
   }
 
-  .btn-ghost:hover:not(:disabled) {
-    background: var(--surface);
+  .btn-primary:hover:not(:disabled) {
+    background: var(--brass-hover);
+  }
+
+  .btn-quiet {
+    background: transparent;
+    color: var(--ink);
+    border: 1px solid var(--line-strong);
+  }
+
+  .btn-quiet:hover:not(:disabled) {
+    background: var(--surface-sunk);
   }
 
   .btn-danger {
-    @apply border border-red-300 text-red-700 hover:bg-red-50
-      dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/40;
+    background: transparent;
+    color: var(--danger);
+    border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    background: var(--danger-tint);
+  }
+
+  /* ---- Field ------------------------------------------------------- */
+
+  .field {
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+    color: var(--ink);
+    /* Never below 16px: iOS zooms the viewport on focus for anything
+       smaller, and that zoom does not undo itself. */
+    font-size: 16px;
+    font-family: inherit;
+    outline: none;
+    transition:
+      border-color 120ms ease-out,
+      box-shadow 120ms ease-out;
+  }
+
+  .field::placeholder {
+    color: var(--ink-faint);
+  }
+
+  .field:focus {
+    border-color: var(--brass);
+    box-shadow: 0 0 0 3px var(--brass-tint);
+  }
+
+  .field[aria-invalid="true"] {
+    border-color: var(--danger);
+  }
+
+  select.field {
+    appearance: none;
+    padding-right: 36px;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+      linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position:
+      calc(100% - 18px) calc(50% + 2px),
+      calc(100% - 13px) calc(50% + 2px);
+    background-size: 5px 5px;
+    background-repeat: no-repeat;
+  }
+
+  .label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--ink-soft);
+    font-size: 11px;
+    line-height: 14px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  /* ---- Motion ------------------------------------------------------ */
+
+  .anim-sheet {
+    animation: sheet-in 220ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
+  .anim-panel {
+    animation: panel-in 160ms ease-out;
+  }
+
+  .anim-fade {
+    animation: fade-in 160ms ease-out;
   }
 }
 
-/* Respect the OS setting — a busy front desk should not get motion it did
-   not ask for. */
+@keyframes sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* A tool someone opens forty times a day: an entrance animation on the
+   fortieth is an obstacle. Nothing animates on load, and the OS setting is
+   honoured absolutely. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Horizontal rails (day strip) scroll without a visible bar — the snap and
+   the partially-visible next cell already say it moves. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* A pointer device reveals the free-slot affordance on hover. A touch screen
+   has no hover, so the mark is always faintly present there instead — a
+   free slot with no affordance at all is not discoverable. */
+.slot-mark {
+  opacity: 0;
+}
+
+.group:hover .slot-mark,
+.group:focus-visible .slot-mark {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .slot-mark {
+    opacity: 0.35;
   }
 }

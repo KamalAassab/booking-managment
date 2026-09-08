@@ -24,12 +24,12 @@ export default function ErrorBoundary({
   }, [error]);
 
   return (
-    <main className="flex flex-1 items-center justify-center p-6">
-      <div className="panel w-full max-w-lg rounded-2xl p-8">
-        <h1 className="text-xl font-semibold tracking-tight">
+    <main className="flex min-h-dvh flex-1 items-center justify-center p-4">
+      <div className="card w-full max-w-[520px] p-6 md:p-8">
+        <h1 className="t-title">
           Le planning n&apos;a pas pu s&apos;afficher
         </h1>
-        <p className="mt-2 text-sm" style={{ color: "var(--text-muted)" }}>
+        <p className="mt-2" style={{ color: "var(--ink-soft)" }}>
           Réessayez. Si le problème persiste, prévenez la personne qui gère le
           site — les réservations déjà enregistrées ne sont pas perdues.
         </p>
@@ -38,13 +38,13 @@ export default function ErrorBoundary({
           <button type="button" onClick={reset} className="btn-primary">
             Réessayer
           </button>
-          <a href="/bookings" className="btn-ghost">
+          <a href="/bookings" className="btn-quiet">
             Retour au planning
           </a>
         </div>
 
         {error.digest ? (
-          <p className="mt-6 text-xs" style={{ color: "var(--text-muted)" }}>
+          <p className="t-small mt-6" style={{ color: "var(--ink-faint)" }}>
             Référence technique : <code className="font-mono">{error.digest}</code>
             {" · "}
             <a href="/api/health" className="underline">

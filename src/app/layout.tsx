@@ -11,13 +11,18 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#1c222c",
+  // Staff must be able to zoom a phone screen in a bright salon.
+  maximumScale: 5,
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#181c1f" },
+  ],
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="fr" className="h-full font-sans antialiased">
-      <body className="flex min-h-full flex-col">{children}</body>
+    <html lang="fr" className="h-full">
+      <body className="flex min-h-dvh flex-col">{children}</body>
     </html>
   );
 }
