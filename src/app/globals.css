@@ -2,11 +2,7 @@
 @import "./fonts.css";
 
 /*
- * Token layer. Dark-navy, blue-accent theme — the interface was rebuilt
- * around a reference dashboard mockup, replacing the earlier warm
- * paper-and-brass system (see docs/DESIGN.md for what that was and why; the
- * note at its top says what changed and why the doc otherwise stays as
- * historical reference).
+ * Token layer. Warm creamy-white light theme.
  */
 
 @theme {
@@ -25,36 +21,35 @@
 }
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
-  /* One fixed dark theme — the reference is a night dashboard, not a
-     light/dark pair, so there is no `prefers-color-scheme` split here. */
-  --paper: #0d1220;
-  --surface: #161d30;
-  --surface-sunk: #0a0e19;
-  --line: #26304a;
-  --line-strong: #384566;
-  --ink: #f1f4fb;
-  --ink-soft: #97a3c4;
-  --ink-faint: #6b7694;
+  --paper: #F7F4EF;
+  --surface: #FFFFFF;
+  --surface-sunk: #EFE9DF;
+  --line: #E5DDD2;
+  --line-strong: #C8BEB2;
+  --ink: #171412;
+  --ink-soft: #6E6258;
+  --ink-faint: #9E9187;
 
-  /* The one accent, spent on the primary action, the live edge and the
-     selected day — same restraint as the system it replaced, new colour. */
-  --accent: #4c7cf0;
-  --accent-hover: #6690f4;
-  --accent-tint: #182446;
+  /* Signature Haute Coiffure Imperial Gold */
+  --accent: #C59B27;
+  --accent-hover: #A0781D;
+  --accent-tint: #FAF4E8;
+  --accent-glow: rgba(197, 155, 39, 0.20);
 
-  --danger: #f0857d;
-  --danger-tint: #2a1620;
+  --danger: #C93025;
+  --danger-tint: #FDF1F0;
 
-  /* Used only where salons are compared — never inside one salon's grid. */
-  --salon-vip: #c39fd1;
-  --salon-gold: #dcb46e;
-  --salon-barber: #8ec3c9;
+  /* Salon signatures */
+  --salon-vip: #8E44AD;
+  --salon-gold: #C59B27;
+  --salon-silver: #94A3B8;
+  --salon-barber: #94A3B8;
 
-  --shadow-card: 0 6px 20px rgb(0 0 0 / 0.28);
-  --shadow-sheet: 0 -8px 32px rgb(0 0 0 / 0.55);
-  --shadow-pop: 0 20px 44px rgb(0 0 0 / 0.5);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.03);
+  --shadow-sheet: 0 -8px 32px rgba(0, 0, 0, 0.16);
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.12);
 }
 
 @layer base {
@@ -166,11 +161,22 @@
     transition:
       background-color 120ms ease-out,
       border-color 120ms ease-out,
+      transform 100ms ease-out,
+      box-shadow 120ms ease-out,
       opacity 120ms ease-out;
+  }
+
+  .btn:active:not(:disabled),
+  .btn-primary:active:not(:disabled),
+  .btn-secondary:active:not(:disabled),
+  .btn-quiet:active:not(:disabled),
+  .btn-danger:active:not(:disabled) {
+    transform: scale(0.98);
   }
 
   .btn:disabled,
   .btn-primary:disabled,
+  .btn-secondary:disabled,
   .btn-quiet:disabled,
   .btn-danger:disabled {
     opacity: 0.45;
@@ -185,11 +191,33 @@
 
   .btn-primary {
     background: var(--accent);
-    color: #fff;
+    color: #ffffff;
+    box-shadow: 0 2px 8px rgba(197, 155, 39, 0.25);
   }
 
   .btn-primary:hover:not(:disabled) {
     background: var(--accent-hover);
+    box-shadow: 0 4px 12px rgba(197, 155, 39, 0.35);
+  }
+
+  .btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 0 16px;
+    border-radius: var(--radius-md);
+    background: var(--surface-sunk);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--surface);
+    border-color: var(--line-strong);
   }
 
   .btn-quiet {
@@ -212,40 +240,53 @@
     background: var(--danger-tint);
   }
 
-  /* ---- Field ------------------------------------------------------- */
+  /* ---- Field (Unified Design Pattern for all Inputs/Selects/Textareas) ---- */
 
-  .field {
+  .field,
+  .input {
     width: 100%;
     min-height: 44px;
-    padding: 10px 12px;
+    padding: 10px 14px;
     border-radius: var(--radius-md);
     border: 1px solid var(--line-strong);
     background: var(--surface-sunk);
     color: var(--ink);
-    /* Never below 16px: iOS zooms the viewport on focus for anything
-       smaller, and that zoom does not undo itself. */
-    font-size: 16px;
+    font-size: 15px;
     font-family: inherit;
     outline: none;
     transition:
       border-color 120ms ease-out,
-      box-shadow 120ms ease-out;
+      box-shadow 120ms ease-out,
+      background-color 120ms ease-out;
   }
 
-  .field::placeholder {
+  .field:hover:not(:disabled),
+  .input:hover:not(:disabled) {
+    border-color: var(--ink-faint);
+  }
+
+  .field::placeholder,
+  .input::placeholder {
     color: var(--ink-faint);
+    opacity: 0.85;
   }
 
-  .field:focus {
+  .field:focus,
+  .field:focus-visible,
+  .input:focus,
+  .input:focus-visible {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-tint);
+    background: var(--surface);
   }
 
-  .field[aria-invalid="true"] {
+  .field[aria-invalid="true"],
+  .input[aria-invalid="true"] {
     border-color: var(--danger);
   }
 
-  select.field {
+  select.field,
+  select.input {
     appearance: none;
     padding-right: 36px;
     background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
@@ -255,6 +296,7 @@
       calc(100% - 13px) calc(50% + 2px);
     background-size: 5px 5px;
     background-repeat: no-repeat;
+    cursor: pointer;
   }
 
   .label {
@@ -316,14 +358,42 @@
   }
 }
 
-/* Horizontal rails scroll without a visible bar. */
+/* ---- Scrollbars: Subtle & Refined Luxury Theme ---------------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--ink-faint) 35%, transparent) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ink-faint) 35%, transparent);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Horizontal rails scroll without a visible bar when explicitly requested */
 .no-scrollbar {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
 }
 
 .no-scrollbar::-webkit-scrollbar {
-  display: none;
+  display: none !important;
 }
 
 /* A pointer device reveals the free-slot affordance on hover. A touch screen
@@ -342,3 +412,4 @@
     opacity: 0.35;
   }
 }
+

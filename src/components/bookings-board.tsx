@@ -315,7 +315,7 @@ export function BookingsBoard({
 
   return (
     <div
-      className="relative flex min-h-dvh flex-col lg:flex-row"
+      className="relative flex min-h-dvh flex-col md:flex-row"
       style={{ background: "var(--paper)" }}
     >
       {/* Ambient glow — the one purely atmospheric touch kept from the
@@ -342,16 +342,23 @@ export function BookingsBoard({
       <div className="relative z-10 flex min-w-0 flex-1 flex-col">
         {/* ---- Header ------------------------------------------------- */}
         <header
-          className="sticky top-0 z-20 border-b px-4 pt-3 md:px-6 lg:px-8"
+          className="sticky top-0 z-20 border-b px-3 pt-3 sm:px-4 md:px-5 lg:px-6"
           style={{
             borderColor: "var(--line)",
             background: "color-mix(in srgb, var(--paper) 88%, transparent)",
             backdropFilter: "blur(8px)",
           }}
         >
-          <div className="mx-auto flex max-w-[1100px] flex-col gap-3 pb-4">
-            <div className="flex items-center gap-3 lg:hidden">
-              <p className="t-title mr-auto">Atelier</p>
+          <div className="flex w-full flex-col gap-3 pb-3">
+            <div className="flex items-center gap-3 md:hidden">
+              <a href="/bookings" className="mr-auto" title="L'Atelier Groupe">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/logo-transparent.webp"
+                  alt="L'Atelier Groupe"
+                  className="h-7 w-auto max-w-[120px] object-contain"
+                />
+              </a>
               <LiveDot state={stream} />
               <form action={logout}>
                 <button
@@ -365,7 +372,7 @@ export function BookingsBoard({
               </form>
             </div>
 
-            <div className="lg:hidden">
+            <div className="md:hidden">
               <SalonSwitcher
                 salons={salons}
                 current={salon.slug}
@@ -394,7 +401,7 @@ export function BookingsBoard({
               </div>
 
               <div className="flex items-center gap-2.5">
-                <div className="hidden items-center gap-1 lg:flex">
+                <div className="hidden items-center gap-1 md:flex">
                   <LiveDot state={stream} />
                 </div>
 
@@ -456,7 +463,7 @@ export function BookingsBoard({
                   onClick={() =>
                     setDialog({ kind: "create", startMin: firstFreeSlot })
                   }
-                  className="btn-primary btn-sm hidden shrink-0 lg:inline-flex"
+                  className="btn-primary btn-sm hidden shrink-0 md:inline-flex"
                 >
                   <Plus size={16} />
                   Nouveau
@@ -467,12 +474,12 @@ export function BookingsBoard({
         </header>
 
         {/* ---- Calendar + schedule ------------------------------------ */}
-        <main className="flex-1 px-4 pb-28 pt-4 md:px-6 lg:px-8 lg:pb-10">
-          <div className="mx-auto flex max-w-[1100px] flex-col gap-4">
+        <main className="flex flex-1 flex-col w-full px-3 pb-24 pt-3 sm:px-4 md:px-5 lg:px-6 lg:pb-8">
+          <div className="flex w-full flex-1 flex-col gap-3.5">
             <ViewSwitcher view={view} onChange={setView} />
 
             {view === "day" ? (
-              <div className="mx-auto flex w-full max-w-[720px] flex-col gap-4">
+              <div className="flex min-h-0 flex-1 flex-col gap-4">
                 <DayGrid
                   salon={salon}
                   date={date}

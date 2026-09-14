@@ -65,7 +65,7 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 CREATE INDEX IF NOT EXISTS "bookings_salon_date_idx" ON "bookings" USING btree ("salon_id","booking_date","start_min");
 CREATE INDEX IF NOT EXISTS "bookings_updated_at_idx" ON "bookings" USING btree ("updated_at");
-CREATE UNIQUE INDEX IF NOT EXISTS "bookings_slot_unique" ON "bookings" USING btree ("salon_id","booking_date","start_min") WHERE status <> 'cancelled';
+CREATE UNIQUE INDEX IF NOT EXISTS "bookings_slot_unique" ON "bookings" USING btree ("salon_id","booking_date","service","start_min") WHERE status <> 'cancelled';
 
 -- ---------- 0001_no_overlap ----------
 CREATE EXTENSION IF NOT EXISTS btree_gist;
@@ -75,6 +75,7 @@ DO $$ BEGIN
     EXCLUDE USING gist (
       "salon_id" WITH =,
       "booking_date" WITH =,
+      "service" WITH =,
       int4range("start_min", "start_min" + "duration_min") WITH &&
     )
     WHERE ("status" <> 'cancelled');

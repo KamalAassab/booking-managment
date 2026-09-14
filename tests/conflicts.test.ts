@@ -23,7 +23,8 @@ const booking = (
   startMin: number,
   durationMin: number,
   status = "confirmed",
-) => ({ id, startMin, durationMin, status });
+  service = "Coloration",
+) => ({ id, startMin, durationMin, status, service });
 
 describe("rangesOverlap", () => {
   it("treats intervals as half-open so back-to-back bookings fit", () => {
@@ -49,68 +50,79 @@ describe("rangesOverlap", () => {
 
 describe("conflictsWithExisting", () => {
   const existing = [
-    booking("a", 600, 30), // 10:00–10:30
-    booking("b", 840, 90), // 14:00–15:30 (a coloration)
+    booking("a", 600, 30, "confirmed", "Manucure"), // 10:00–10:30
+    booking("b", 840, 90, "confirmed", "Coloration"), // 14:00–15:30 (a coloration)
   ];
 
   it("allows a free slot", () => {
-    expect(conflictsWithExisting({ startMin: 660, durationMin: 30 }, existing)).toBe(
+    expect(conflictsWithExisting({ startMin: 660, durationMin: 30, service: "Manucure" }, existing)).toBe(
       false,
     );
   });
 
-  it("blocks the exact slot of an existing booking", () => {
-    expect(conflictsWithExisting({ startMin: 600, durationMin: 30 }, existing)).toBe(
-      true,
-    );
-  });
-
-  it("blocks slots swallowed by a longer booking", () => {
-    // 14:30 and 15:00 are inside the 90-minute coloration.
-    expect(conflictsWithExisting({ startMin: 870, durationMin: 30 }, existing)).toBe(
-      true,
-    );
-    expect(conflictsWithExisting({ startMin: 900, durationMin: 30 }, existing)).toBe(
-      true,
-    );
-  });
-
-  it("blocks a new long booking that would run into an existing one", () => {
-    // 13:30 + 60min ends at 14:30, colliding with the 14:00 booking.
-    expect(conflictsWithExisting({ startMin: 810, durationMin: 60 }, existing)).toBe(
-      true,
-    );
-  });
-
-  it("allows a booking that ends exactly when another starts", () => {
-    expect(conflictsWithExisting({ startMin: 780, durationMin: 60 }, existing)).toBe(
-      false,
-    );
-  });
-
-  it("ignores cancelled bookings so the slot is reusable", () => {
-    const withCancelled = [booking("c", 600, 30, "cancelled")];
+  it("allows a DIFFERENT service on the EXACT same time slot", () => {
+    // 10:00–10:30 is taken by "Manucure", but "Brushing" is a different service and allowed!
     expect(
-      conflictsWithExisting({ startMin: 600, durationMin: 30 }, withCancelled),
+      conflictsWithExisting({ startMin: 600, durationMin: 30, service: "Brushing" }, existing),
+    ).toBe(false);
+    // 14:00–15:30 is taken by "Coloration", but "Coupe Simple" is allowed!
+    expect(
+      conflictsWithExisting({ startMin: 840, durationMin: 30, service: "Coupe Simple" }, existing),
     ).toBe(false);
   });
 
-  it("still blocks against bookings marked done", () => {
-    const withDone = [booking("d", 600, 30, "done")];
-    expect(conflictsWithExisting({ startMin: 600, durationMin: 30 }, withDone)).toBe(
-      true,
-    );
+  it("blocks the SAME service on the exact slot of an existing booking", () => {
+    expect(
+      conflictsWithExisting({ startMin: 600, durationMin: 30, service: "Manucure" }, existing),
+    ).toBe(true);
+  });
+
+  it("blocks the SAME service when swallowed by a longer booking", () => {
+    // 14:30 and 15:00 for Coloration are inside the 90-minute Coloration.
+    expect(
+      conflictsWithExisting({ startMin: 870, durationMin: 30, service: "Coloration" }, existing),
+    ).toBe(true);
+    expect(
+      conflictsWithExisting({ startMin: 900, durationMin: 30, service: "Coloration" }, existing),
+    ).toBe(true);
+  });
+
+  it("blocks a new long booking of the SAME service that would run into an existing one", () => {
+    // 13:30 + 60min ends at 14:30, colliding with the 14:00 Coloration.
+    expect(
+      conflictsWithExisting({ startMin: 810, durationMin: 60, service: "Coloration" }, existing),
+    ).toBe(true);
+  });
+
+  it("allows a booking that ends exactly when another starts", () => {
+    expect(
+      conflictsWithExisting({ startMin: 780, durationMin: 60, service: "Coloration" }, existing),
+    ).toBe(false);
+  });
+
+  it("ignores cancelled bookings so the slot is reusable", () => {
+    const withCancelled = [booking("c", 600, 30, "cancelled", "Manucure")];
+    expect(
+      conflictsWithExisting({ startMin: 600, durationMin: 30, service: "Manucure" }, withCancelled),
+    ).toBe(false);
+  });
+
+  it("still blocks against bookings marked done for the same service", () => {
+    const withDone = [booking("d", 600, 30, "done", "Manucure")];
+    expect(
+      conflictsWithExisting({ startMin: 600, durationMin: 30, service: "Manucure" }, withDone),
+    ).toBe(true);
   });
 
   it("does not consider a booking to conflict with itself when edited", () => {
     expect(
-      conflictsWithExisting({ startMin: 840, durationMin: 90 }, existing, "b"),
+      conflictsWithExisting({ startMin: 840, durationMin: 90, service: "Coloration" }, existing, "b"),
     ).toBe(false);
   });
 
-  it("still catches a conflict when an edited booking is moved onto another", () => {
+  it("still catches a conflict when an edited booking is moved onto another of the same service", () => {
     expect(
-      conflictsWithExisting({ startMin: 600, durationMin: 30 }, existing, "b"),
+      conflictsWithExisting({ startMin: 600, durationMin: 30, service: "Manucure" }, existing, "b"),
     ).toBe(true);
   });
 });

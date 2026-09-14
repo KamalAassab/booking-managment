@@ -83,9 +83,12 @@ function TimelineItem({
     clientName: booking.clientName,
     clientPhone: booking.clientPhone,
     salonName: salon.name,
+    salonSlug: salon.slug,
     bookingDate: booking.bookingDate,
     startMin: booking.startMin,
+    durationMin: booking.durationMin,
     service: booking.service,
+    notes: booking.notes,
   });
 
   return (
@@ -150,7 +153,7 @@ function TimelineItem({
               title={
                 booking.channel === "call_center"
                   ? "Centre d'appels"
-                  : "Réception"
+                  : "Propriétaire"
               }
             >
               {booking.channel === "call_center" ? (

@@ -161,16 +161,17 @@ export function rangesOverlap(
 }
 
 /**
- * Mirrors the database exclusion constraint so the UI can grey out slots
- * before the user clicks. The database remains the authority — this is a
- * courtesy check, never the guarantee.
+ * Checks if a candidate booking collides with an existing booking.
+ * Note: Different services at the same salon/time are permitted concurrently.
+ * A conflict only occurs when the same service overlaps the same time range.
  */
 export function conflictsWithExisting(
-  candidate: { startMin: number; durationMin: number },
+  candidate: { startMin: number; durationMin: number; service?: string },
   existing: Array<{
     id: string;
     startMin: number;
     durationMin: number;
+    service?: string;
     status: string;
   }>,
   ignoreBookingId?: string,
@@ -179,6 +180,9 @@ export function conflictsWithExisting(
     (b) =>
       b.status !== "cancelled" &&
       b.id !== ignoreBookingId &&
+      (!candidate.service ||
+        !b.service ||
+        candidate.service.trim().toLowerCase() === b.service.trim().toLowerCase()) &&
       rangesOverlap(
         candidate.startMin,
         candidate.durationMin,

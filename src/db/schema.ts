@@ -125,7 +125,7 @@ export const bookings = pgTable(
     // as a cheap second line of defence and a clearer error for the common
     // "two agents picked the same slot" collision.
     uniqueIndex("bookings_slot_unique")
-      .on(t.salonId, t.bookingDate, t.startMin)
+      .on(t.salonId, t.bookingDate, t.service, t.startMin)
       .where(sql`status <> 'cancelled'`),
     check("bookings_start_min_range", sql`${t.startMin} BETWEEN 0 AND 1439`),
     check("bookings_duration_positive", sql`${t.durationMin} > 0`),
@@ -147,3 +147,40 @@ export type Salon = typeof salons.$inferSelect;
 export type Booking = typeof bookings.$inferSelect;
 export type NewBooking = typeof bookings.$inferInsert;
 export type User = typeof users.$inferSelect;
+
+/**
+ * Per-salon service catalogue.
+ *
+ * Created from the hardcoded list in lib/services-catalog.ts on first seed;
+ * the owner can then edit prices / names / durations without a code deploy.
+ * The booking sheet reads from this table when available, falling back to
+ * the static catalog if the table is empty (ConfigError / missing table).
+ */
+export const services = pgTable(
+  "services",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    salonId: uuid("salon_id")
+      .notNull()
+      .references(() => salons.id, { onDelete: "cascade" }),
+    category: varchar("category", { length: 120 }).notNull(),
+    name: varchar("name", { length: 200 }).notNull(),
+    durationMin: integer("duration_min").notNull().default(30),
+    price: integer("price").notNull().default(0),
+    sortOrder: smallint("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("services_salon_sort_idx").on(t.salonId, t.sortOrder),
+    check("services_duration_positive", sql`${t.durationMin} > 0`),
+    check("services_price_non_negative", sql`${t.price} >= 0`),
+  ],
+);
+
+export type Service = typeof services.$inferSelect;
+export type NewService = typeof services.$inferInsert;

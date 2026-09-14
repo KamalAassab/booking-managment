@@ -1,6 +1,7 @@
 import { logout } from "@/app/actions/auth";
 import { ChevronLeft, ChevronRight, Check, Power } from "@/components/icons";
 import { OwnerPasswordForms } from "@/components/owner-password-forms";
+import { Sidebar } from "@/components/sidebar";
 import type { Booking, Salon } from "@/db/schema";
 import { requireOwner } from "@/lib/auth";
 import { listBookingsForSalons, listSalons } from "@/lib/bookings";
@@ -15,6 +16,7 @@ import {
   minutesToLabel,
   todayInSalonTz,
 } from "@/lib/time";
+import { toSalonDTO } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -43,43 +45,42 @@ export default async function OwnerPage({ searchParams }: PageProps<"/owner">) {
   const salonWhatsApp = salonWhatsAppNumber();
 
   return (
-    <div className="flex min-h-dvh flex-col">
-      <header
-        className="sticky top-0 z-20 border-b"
-        style={{
-          borderColor: "var(--line)",
-          background: "color-mix(in srgb, var(--surface) 94%, transparent)",
-          backdropFilter: "blur(8px)",
-        }}
-      >
-        <div className="mx-auto flex max-w-[1180px] items-center gap-3 px-4 py-3 md:px-6">
-          <div className="mr-auto">
-            <p className="t-title">Atelier</p>
-            <p className="t-small" style={{ color: "var(--ink-faint)" }}>
-              Espace propriétaire
-            </p>
-          </div>
-          <a
-            href="/bookings"
-            className="t-small rounded-[8px] px-2.5 py-2 transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
-            style={{ color: "var(--ink-soft)" }}
-          >
-            Planning
-          </a>
-          <form action={logout}>
-            <button
-              type="submit"
-              className="flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
-              style={{ color: "var(--ink-soft)" }}
-              aria-label="Déconnexion"
-            >
-              <Power size={18} />
-            </button>
-          </form>
-        </div>
-      </header>
+    <div className="flex min-h-dvh flex-col md:flex-row" style={{ background: "var(--paper)" }}>
+      <Sidebar role="owner" salons={salons.map(toSalonDTO)} />
 
-      <main className="mx-auto w-full max-w-[1180px] flex-1 px-4 py-6 md:px-6 md:py-8">
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* Mobile Header */}
+        <header
+          className="sticky top-0 z-20 border-b md:hidden"
+          style={{
+            borderColor: "var(--line)",
+            background: "color-mix(in srgb, var(--surface) 94%, transparent)",
+            backdropFilter: "blur(8px)",
+          }}
+        >
+          <div className="flex items-center gap-3 px-4 py-3">
+            <a href="/bookings" className="mr-auto" title="L'Atelier Groupe">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/logo-transparent.webp"
+                alt="L'Atelier Groupe"
+                className="h-7 w-auto max-w-[120px] object-contain"
+              />
+            </a>
+            <form action={logout}>
+              <button
+                type="submit"
+                className="flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
+                style={{ color: "var(--ink-soft)" }}
+                aria-label="Déconnexion"
+              >
+                <Power size={18} />
+              </button>
+            </form>
+          </div>
+        </header>
+
+        <main className="mx-auto w-full max-w-[1180px] flex-1 px-4 py-6 md:px-6 lg:px-8 lg:py-8">
         {/* ---- The three salons -------------------------------------- */}
         <section className="mb-10">
           <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
@@ -244,6 +245,7 @@ export default async function OwnerPage({ searchParams }: PageProps<"/owner">) {
           <OwnerPasswordForms />
         </section>
       </main>
+      </div>
     </div>
   );
 }

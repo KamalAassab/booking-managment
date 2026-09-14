@@ -80,36 +80,81 @@ describe("wa.me link", () => {
     clientName: "Salma Bennani",
     clientPhone: "+212612345678",
     salonName: "L'Atelier VIP",
+    salonSlug: "vip",
     bookingDate: "2026-09-08",
     startMin: 870,
+    durationMin: 90,
     service: "Coloration",
+    price: 350,
+    notes: "Client fidèle",
   };
 
   it("addresses the digits-only number, with no plus sign", () => {
     const url = buildWhatsAppLink(input);
-    expect(url.startsWith("https://wa.me/212612345678?text=")).toBe(true);
+    expect(url.startsWith("https://api.whatsapp.com/send?phone=212612345678&text=")).toBe(true);
     expect(url).not.toContain("+212");
     expect(waDigits("+212612345678")).toBe("212612345678");
   });
 
-  it("puts the booking details in the pre-filled message", () => {
+  it("puts all booking details, native emojis, price and note in the pre-filled message", () => {
     const message = buildConfirmationMessage(input);
     expect(message).toContain("Salma");
-    expect(message).toContain("L'Atelier VIP");
+    expect(message).toContain("👑 *L'Atelier VIP*");
     expect(message).toContain("14:30");
+    expect(message).toContain("(90 min)");
     expect(message).toContain("Coloration");
+    expect(message).toContain("350 MAD");
+    expect(message).toContain("Client fidèle");
+    expect(message).not.toContain("\uFFFD");
   });
 
-  it("greets by first name only", () => {
-    expect(buildConfirmationMessage(input).startsWith("Bonjour Salma,")).toBe(
-      true,
-    );
+  it("greets by first name with friendly wave emoji", () => {
+    expect(buildConfirmationMessage(input).startsWith("Bonjour Salma 👋,")).toBe(true);
   });
 
-  it("url-encodes the message so newlines and accents survive", () => {
+  it("uses matching emojis for each salon identity", () => {
+    const vipMsg = buildConfirmationMessage({
+      ...input,
+      salonName: "L'Atelier VIP",
+      salonSlug: "vip",
+    });
+    expect(vipMsg).toContain("👑 *L'Atelier VIP*");
+
+    const goldMsg = buildConfirmationMessage({
+      ...input,
+      salonName: "L'Atelier Gold",
+      salonSlug: "gold",
+    });
+    expect(goldMsg).toContain("✨ *L'Atelier Gold*");
+
+    const silverMsg = buildConfirmationMessage({
+      ...input,
+      salonName: "L'Atelier Silver",
+      salonSlug: "silver",
+    });
+    expect(silverMsg).toContain("💈 *L'Atelier Silver*");
+  });
+
+  it("resolves catalog price when price is not provided", () => {
+    const msg = buildConfirmationMessage({
+      clientName: "Mehdi",
+      clientPhone: "0661000000",
+      salonName: "L'Atelier Silver",
+      salonSlug: "barber",
+      bookingDate: "2026-09-10",
+      startMin: 600,
+      service: "Coupe Simple",
+    });
+    expect(msg).toContain("40 MAD");
+    expect(msg).toContain("💈 *L'Atelier Silver*");
+  });
+
+  it("url-encodes the message cleanly so emojis, newlines and accents survive", () => {
     const url = buildWhatsAppLink(input);
-    const text = decodeURIComponent(url.split("?text=")[1]);
+    const parsedUrl = new URL(url);
+    const text = parsedUrl.searchParams.get("text");
     expect(text).toBe(buildConfirmationMessage(input));
     expect(url).not.toContain("\n");
+    expect(url).not.toContain("\uFFFD");
   });
 });

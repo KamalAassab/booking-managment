@@ -1,7 +1,6 @@
 /**
- * Seeds the three salons and the two accounts. Safe to re-run: salons are
- * upserted by slug and accounts are only created if missing, so an existing
- * password is never silently reset.
+ * Seeds the three salons, two accounts, and service catalogue. Safe to
+ * re-run: salons and services are upserted, accounts only created if missing.
  *
  *   npm run db:seed
  *
@@ -9,17 +8,22 @@
  * are generated and printed once if those are not set. The owner changes the
  * shared staff password from /owner afterwards.
  */
-import "dotenv/config";
+import { config } from "dotenv";
+
+config({ path: ".env.local" });
+config({ path: ".env" });
+
 
 import { randomBytes } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import { db } from "../src/db";
 import * as schema from "../src/db/schema";
 import { hashPassword } from "../src/lib/password";
+import { getServicesForSalon } from "../src/lib/services-catalog";
 
-const { salons, users } = schema;
+const { salons, users, services } = schema;
 
 // Real hours from latelier-groupe's own site data (src/data/services.ts,
 // `branches[].hours`) — every salon is open every day of the week, so a
@@ -44,7 +48,7 @@ const SALONS = [
   },
   {
     slug: "barber",
-    name: "L'Atelier Barber Shop & Spa",
+    name: "L'Atelier Silver",
     sortOrder: 2,
     opensAtMin: 9 * 60,
     closesAtMin: 23 * 60,
@@ -57,9 +61,38 @@ function generatePassword(): string {
   return randomBytes(9).toString("base64url");
 }
 
+async function seedServices(salonId: string, slug: string): Promise<void> {
+  const existing = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(services)
+    .where(eq(services.salonId, salonId));
+
+  if ((existing[0]?.count ?? 0) > 0) {
+    console.log(`  services already present for ${slug}, skipped`);
+    return;
+  }
+
+  const catalog = getServicesForSalon(slug);
+  if (catalog.length === 0) return;
+
+  await db.insert(services).values(
+    catalog.map((entry, i) => ({
+      salonId,
+      category: entry.category,
+      name: entry.name,
+      durationMin: entry.durationMin,
+      price: entry.price,
+      sortOrder: i,
+    })),
+  );
+  console.log(`  seeded ${catalog.length} services for ${slug}`);
+}
+
 async function main() {
+  const salonIds: Record<string, string> = {};
+
   for (const salon of SALONS) {
-    await db
+    const rows = await db
       .insert(salons)
       .values(salon)
       .onConflictDoUpdate({
@@ -71,8 +104,17 @@ async function main() {
           closesAtMin: salon.closesAtMin,
           slotMin: salon.slotMin,
         },
-      });
+      })
+      .returning({ id: salons.id });
+    const id = rows[0]?.id;
+    if (id) salonIds[salon.slug] = id;
     console.log(`salon ready: ${salon.slug} (${salon.name})`);
+  }
+
+  // Seed services from the static catalog (idempotent — skips if rows exist)
+  for (const salon of SALONS) {
+    const id = salonIds[salon.slug];
+    if (id) await seedServices(id, salon.slug);
   }
 
   const accounts = [

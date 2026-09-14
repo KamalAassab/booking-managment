@@ -6,6 +6,12 @@ export const metadata: Metadata = {
   title: "Atelier Planning",
   description: "Gestion des réservations — L'Atelier Groupe",
   robots: { index: false, follow: false },
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+    ],
+    apple: "/icon.svg",
+  },
 };
 
 export const viewport: Viewport = {

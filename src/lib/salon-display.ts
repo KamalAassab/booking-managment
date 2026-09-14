@@ -14,11 +14,13 @@
 export function salonColor(slug: string): string {
   if (slug === "vip") return "var(--salon-vip)";
   if (slug === "gold") return "var(--salon-gold)";
-  if (slug === "barber") return "var(--salon-barber)";
+  if (slug === "barber" || slug === "silver") return "var(--salon-silver)";
   return "var(--ink-soft)";
 }
 
-/** "L'Atelier Gold" -> "Gold". The prefix is constant, so it carries nothing. */
+/** "L'Atelier Gold" -> "Gold", "L'Atelier Barber Shop & Spa" -> "Silver". */
 export function shortName(name: string): string {
-  return name.replace(/^L'Atelier\s*/i, "").replace(/\s*Shop & Spa$/i, "");
+  const clean = name.replace(/^L'Atelier\s*/i, "").replace(/\s*Shop & Spa$/i, "");
+  if (/barber/i.test(clean)) return "Silver";
+  return clean;
 }

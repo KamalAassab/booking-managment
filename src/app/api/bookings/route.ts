@@ -70,9 +70,12 @@ export async function POST(request: Request) {
       clientName: booking.clientName,
       clientPhone: booking.clientPhone,
       salonName: salon.name,
+      salonSlug: salon.slug,
       bookingDate: booking.bookingDate,
       startMin: booking.startMin,
+      durationMin: booking.durationMin,
       service: booking.service,
+      notes: booking.notes,
     });
 
     return jsonNoStore({ booking: toBookingDTO(booking), whatsappUrl }, 201);

@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { DialogState } from "@/components/bookings-board";
-import { Check, Close, WhatsApp } from "@/components/icons";
+import { ClientCombobox } from "@/components/client-combobox";
+import { Check, Close, RotateCcw, WhatsApp } from "@/components/icons";
+import { SelectDropdown } from "@/components/ui/select";
 import type { ToastMessage } from "@/components/toast";
 import type { DeviceMode } from "@/lib/device";
 import { formatPhoneForDisplay } from "@/lib/phone";
@@ -90,13 +92,21 @@ export function BookingSheet({
       catalogEntries.find((entry) => entry.name === service)?.durationMin ??
       salon.slotMin,
   );
+  const [price, setPrice] = useState<number | "">(
+    catalogEntries.find((entry) => entry.name === service)?.price ?? "",
+  );
 
-  /** Picking a real service pre-fills its standard duration; staff can still
-   * override it below. */
+  /** Picking a real service pre-fills its standard duration and price; staff
+   * can still override both below. */
   function handleServiceChange(name: string) {
     setService(name);
     const entry = catalogEntries.find((e) => e.name === name);
-    if (entry) setDurationMin(entry.durationMin);
+    if (entry) {
+      setDurationMin(entry.durationMin);
+      setPrice(entry.price);
+    } else {
+      setPrice("");
+    }
   }
   const [notes, setNotes] = useState(editing?.notes ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -160,7 +170,7 @@ export function BookingSheet({
   // Advisory only — the database exclusion constraint is the real guarantee.
   // This just stops an agent submitting something we already know will fail.
   const localConflict = conflictsWithExisting(
-    { startMin, durationMin },
+    { startMin, durationMin, service: resolvedService },
     bookings,
     editing?.id,
   );
@@ -261,7 +271,7 @@ export function BookingSheet({
     }
   }
 
-  async function mutateStatus(status: "cancelled" | "done") {
+  async function mutateStatus(status: "cancelled" | "done" | "confirmed") {
     if (!editing || busy) return;
     setBusy(true);
     setError(null);
@@ -284,7 +294,9 @@ export function BookingSheet({
         text:
           status === "cancelled"
             ? "Rendez-vous annulé."
-            : "Marqué comme terminé.",
+            : status === "done"
+            ? "Rendez-vous marqué comme terminé."
+            : "Rendez-vous rétabli (non terminé).",
       });
       onChanged();
       onClose();
@@ -300,16 +312,19 @@ export function BookingSheet({
         clientName: editing.clientName,
         clientPhone: editing.clientPhone,
         salonName: salon.name,
+        salonSlug: salon.slug,
         bookingDate: editing.bookingDate,
         startMin: editing.startMin,
+        durationMin: editing.durationMin,
         service: editing.service,
+        notes: editing.notes,
       })
     : null;
 
   return (
     <div
       className="anim-fade fixed inset-0 z-40 flex items-end justify-center md:items-center md:p-4"
-      style={{ background: "rgb(20 24 26 / 0.32)", backdropFilter: "blur(2px)" }}
+      style={{ background: "rgb(100 90 80 / 0.22)", backdropFilter: "blur(2px)" }}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -319,7 +334,7 @@ export function BookingSheet({
         role="dialog"
         aria-modal="true"
         aria-labelledby="sheet-title"
-        className="anim-sheet flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-[20px] md:anim-panel md:max-w-[480px] md:rounded-[20px]"
+        className="anim-sheet flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-[20px] md:anim-panel md:max-w-[620px] md:rounded-[20px]"
         style={{ background: "var(--surface)", boxShadow: "var(--shadow-sheet)" }}
       >
         {/* Grab handle: mobile only, and decorative — the close button is the
@@ -356,99 +371,75 @@ export function BookingSheet({
           className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5"
         >
           <div className="flex flex-col gap-4 pb-4">
-            <div>
-              <label className="label" htmlFor="clientName">
-                Client
-              </label>
-              <input
-                ref={firstFieldRef}
-                id="clientName"
-                className="field"
-                value={clientName}
-                onChange={(e) => setClientName(e.target.value)}
-                required
-                minLength={2}
-                maxLength={120}
-                autoComplete="off"
-                placeholder="Nom et prénom"
-              />
-            </div>
-
-            <div>
-              <label className="label" htmlFor="clientPhone">
-                Téléphone
-              </label>
-              <input
-                id="clientPhone"
-                className="field"
-                type="tel"
-                inputMode="tel"
-                value={clientPhone}
-                onChange={(e) => setClientPhone(e.target.value)}
-                required
-                placeholder="06 12 34 56 78"
-                autoComplete="off"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
+            {/* Client name and Phone on 2 columns */}
+            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
               <div>
-                <label className="label" htmlFor="startMin">
-                  Heure
+                <label className="label" htmlFor="client_name">
+                  Nom du client
                 </label>
-                <select
-                  id="startMin"
-                  className="field"
-                  value={startMin}
-                  onChange={(e) => setStartMin(Number(e.target.value))}
-                >
-                  {slots.map((s) => (
-                    <option key={s} value={s}>
-                      {minutesToLabel(s)}
-                    </option>
-                  ))}
-                </select>
+                <ClientCombobox
+                  inputRef={firstFieldRef}
+                  value={clientName}
+                  onChange={setClientName}
+                  onSelectClient={(client) => {
+                    setClientName(client.name);
+                    if (client.phone) {
+                      setClientPhone(formatPhoneForDisplay(client.phone));
+                    }
+                  }}
+                  required
+                />
               </div>
+
               <div>
-                <label className="label" htmlFor="durationMin">
-                  Durée
+                <label className="label" htmlFor="clientPhone">
+                  Téléphone
                 </label>
-                <select
-                  id="durationMin"
+                <input
+                  id="clientPhone"
                   className="field"
-                  value={durationMin}
-                  onChange={(e) => setDurationMin(Number(e.target.value))}
-                >
-                  {DURATION_OPTIONS.map((d) => (
-                    <option key={d} value={d}>
-                      {d} min
-                    </option>
-                  ))}
-                </select>
+                  type="tel"
+                  inputMode="tel"
+                  value={clientPhone}
+                  onChange={(e) => setClientPhone(e.target.value)}
+                  required
+                  placeholder="06 12 34 56 78"
+                  autoComplete="off"
+                />
               </div>
             </div>
 
+            {/* Service */}
             <div>
               <label className="label" htmlFor="service">
                 Service
               </label>
-              <select
+              <SelectDropdown<string>
                 id="service"
-                className="field"
                 value={service}
-                onChange={(e) => handleServiceChange(e.target.value)}
-              >
-                {catalog.map((group) => (
-                  <optgroup key={group.category} label={group.category}>
-                    {group.items.map((entry) => (
-                      <option key={entry.name} value={entry.name}>
-                        {entry.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-                <option value={CUSTOM_SERVICE}>{CUSTOM_SERVICE}</option>
-              </select>
+                onChange={handleServiceChange}
+                searchable
+                searchPlaceholder="Rechercher un service…"
+                groups={catalog.map((group) => ({
+                  category: group.category,
+                  items: group.items.map((entry) => ({
+                    value: entry.name,
+                    label: entry.name,
+                    description: `${entry.durationMin} min · ${entry.price} MAD`,
+                  })),
+                })).concat([
+                  {
+                    category: "Autre",
+                    items: [
+                      {
+                        value: CUSTOM_SERVICE,
+                        label: CUSTOM_SERVICE,
+                        description: "Service personnalisé",
+                      },
+                    ],
+                  },
+                ])}
+              />
             </div>
 
             {service === CUSTOM_SERVICE ? (
@@ -467,13 +458,74 @@ export function BookingSheet({
               </div>
             ) : null}
 
+            {/* Heure, Durée, Tarif on ONE line */}
+            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-3">
+              <div>
+                <label className="label" htmlFor="startMin">
+                  Heure
+                </label>
+                <SelectDropdown<number>
+                  id="startMin"
+                  value={startMin}
+                  onChange={setStartMin}
+                  options={slots.map((s) => ({
+                    value: s,
+                    label: minutesToLabel(s),
+                  }))}
+                />
+              </div>
+
+              <div>
+                <label className="label" htmlFor="durationMin">
+                  Durée
+                </label>
+                <SelectDropdown<number>
+                  id="durationMin"
+                  value={durationMin}
+                  onChange={setDurationMin}
+                  options={DURATION_OPTIONS.map((d) => ({
+                    value: d,
+                    label: `${d} min`,
+                  }))}
+                />
+              </div>
+
+              <div>
+                <label className="label" htmlFor="price">
+                  Tarif
+                </label>
+                <div className="relative flex items-center">
+                  <input
+                    id="price"
+                    className="field pr-12"
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    step={1}
+                    value={price}
+                    onChange={(e) =>
+                      setPrice(e.target.value === "" ? "" : Number(e.target.value))
+                    }
+                    placeholder="0"
+                  />
+                  <span
+                    className="pointer-events-none absolute right-3 text-[12px] font-semibold"
+                    style={{ color: "var(--ink-soft)" }}
+                  >
+                    MAD
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Notes */}
             <div>
               <label className="label" htmlFor="notes">
                 Note <span style={{ textTransform: "none" }}>(facultatif)</span>
               </label>
               <textarea
                 id="notes"
-                className="field"
+                className="field resize-none"
                 rows={2}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
@@ -490,8 +542,7 @@ export function BookingSheet({
 
             {localConflict ? (
               <Advisory>
-                Ce créneau chevauche un autre rendez-vous. Le serveur le
-                refusera.
+                Ce créneau chevauche déjà un rendez-vous pour cette même prestation.
               </Advisory>
             ) : null}
 
@@ -531,16 +582,31 @@ export function BookingSheet({
               >
                 {busy ? "…" : editing ? "Enregistrer" : "Réserver"}
               </button>
-              {editing && editing.status !== "done" ? (
-                <button
-                  type="button"
-                  className="btn-quiet"
-                  onClick={() => mutateStatus("done")}
-                  disabled={busy}
-                  aria-label="Marquer comme terminé"
-                >
-                  <Check size={18} />
-                </button>
+
+              {editing ? (
+                editing.status === "done" ? (
+                  <button
+                    type="button"
+                    className="btn-secondary inline-flex items-center gap-1.5 px-3.5 font-semibold text-amber-600 hover:text-amber-700"
+                    onClick={() => mutateStatus("confirmed")}
+                    disabled={busy}
+                    title="Rétablir ce rendez-vous (marquer non terminé)"
+                  >
+                    <RotateCcw size={15} className="shrink-0" />
+                    <span>Non terminé</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn-secondary inline-flex items-center gap-1.5 px-3.5 font-semibold text-emerald-600 hover:text-emerald-700"
+                    onClick={() => mutateStatus("done")}
+                    disabled={busy}
+                    title="Marquer comme terminé"
+                  >
+                    <Check size={16} className="shrink-0" />
+                    <span>Terminé</span>
+                  </button>
+                )
               ) : null}
             </div>
 

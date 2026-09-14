@@ -58,11 +58,15 @@ export function WeekGrid({
   const nowMin = nowMinutesInSalonTz();
 
   const activeByDate = useMemo(() => {
-    const map = new Map<string, Map<number, BookingDTO>>();
+    const map = new Map<string, Map<number, BookingDTO[]>>();
     for (const d of weekDates) {
-      const byStart = new Map<number, BookingDTO>();
+      const byStart = new Map<number, BookingDTO[]>();
       for (const b of bookingsByDate.get(d) ?? []) {
-        if (b.status !== "cancelled") byStart.set(b.startMin, b);
+        if (b.status !== "cancelled") {
+          const arr = byStart.get(b.startMin) ?? [];
+          arr.push(b);
+          byStart.set(b.startMin, arr);
+        }
       }
       map.set(d, byStart);
     }
@@ -73,13 +77,18 @@ export function WeekGrid({
     const map = new Map<string, Set<number>>();
     for (const [d, byStart] of activeByDate) {
       const set = new Set<number>();
-      for (const b of byStart.values()) {
-        for (
-          let t = b.startMin + salon.slotMin;
-          t < b.startMin + b.durationMin;
-          t += salon.slotMin
-        ) {
-          set.add(t);
+      for (const [startMin, bList] of byStart) {
+        for (const b of bList) {
+          for (
+            let t = b.startMin + salon.slotMin;
+            t < b.startMin + b.durationMin;
+            t += salon.slotMin
+          ) {
+            // Only consider covered if no new booking starts at t
+            if (!byStart.has(t)) {
+              set.add(t);
+            }
+          }
         }
       }
       map.set(d, set);
@@ -177,8 +186,8 @@ export function WeekGrid({
 
             {weekDates.map((d, colIndex) => {
               const isPastDay = d < today;
-              const byStart = activeByDate.get(d) ?? new Map();
-              const covered = coveredByDate.get(d) ?? new Set();
+              const byStart = activeByDate.get(d) ?? new Map<number, BookingDTO[]>();
+              const covered = coveredByDate.get(d) ?? new Set<number>();
 
               return (
                 <div key={d} className="contents">
@@ -196,12 +205,9 @@ export function WeekGrid({
 
                   {slots.map((startMin, i) => {
                     if (covered.has(startMin)) return null;
-                    const booking = byStart.get(startMin);
-                    const span = booking
-                      ? Math.max(1, Math.ceil(booking.durationMin / salon.slotMin))
-                      : 1;
+                    const bookings = byStart.get(startMin) ?? [];
 
-                    if (!booking) {
+                    if (bookings.length === 0) {
                       const isPastSlot =
                         isPastDay ||
                         (d === today && startMin + salon.slotMin <= nowMin);
@@ -222,31 +228,95 @@ export function WeekGrid({
                       );
                     }
 
-                    const done = booking.status === "done";
-                    return (
-                      <button
-                        key={booking.id}
-                        type="button"
-                        onClick={() => onSelectBooking(booking)}
-                        className="m-0.5 overflow-hidden rounded-[6px] px-1.5 py-1 text-left"
-                        style={{
-                          gridColumn: colIndex + 2,
-                          gridRow: `${i + 1} / span ${span}`,
-                          background: done ? "var(--surface-sunk)" : "var(--accent-tint)",
-                          borderLeft: done
-                            ? "1px solid var(--line)"
-                            : "2.5px solid var(--accent)",
-                        }}
-                      >
-                        <span
-                          className="block truncate text-[10.5px] font-semibold"
+                    if (bookings.length === 1) {
+                      const booking = bookings[0];
+                      const span = Math.max(1, Math.ceil(booking.durationMin / salon.slotMin));
+                      const done = booking.status === "done";
+                      return (
+                        <button
+                          key={booking.id}
+                          type="button"
+                          onClick={() => onSelectBooking(booking)}
+                          className="m-0.5 overflow-hidden rounded-[6px] px-1.5 py-1 text-left"
                           style={{
-                            color: done ? "var(--ink-faint)" : "var(--accent-hover)",
+                            gridColumn: colIndex + 2,
+                            gridRow: `${i + 1} / span ${span}`,
+                            background: done ? "var(--surface-sunk)" : "var(--accent-tint)",
+                            borderLeft: done
+                              ? "1px solid var(--line)"
+                              : "2.5px solid var(--accent)",
                           }}
                         >
-                          {booking.clientName}
-                        </span>
-                      </button>
+                          <span
+                            className="block truncate text-[10.5px] font-semibold"
+                            style={{
+                              color: done ? "var(--ink-faint)" : "var(--accent-hover)",
+                            }}
+                          >
+                            {booking.clientName}
+                          </span>
+                          <span
+                            className="block truncate text-[9.5px]"
+                            style={{
+                              color: "var(--ink-faint)",
+                            }}
+                          >
+                            {booking.service}
+                          </span>
+                        </button>
+                      );
+                    }
+
+                    // Multiple concurrent bookings starting at this slot
+                    const maxSpan = Math.max(
+                      1,
+                      ...bookings.map((b) => Math.ceil(b.durationMin / salon.slotMin)),
+                    );
+
+                    return (
+                      <div
+                        key={`multi-${d}-${startMin}`}
+                        className="m-0.5 flex flex-col gap-1 overflow-hidden rounded-[6px] p-0.5"
+                        style={{
+                          gridColumn: colIndex + 2,
+                          gridRow: `${i + 1} / span ${maxSpan}`,
+                        }}
+                      >
+                        {bookings.map((booking) => {
+                          const done = booking.status === "done";
+                          return (
+                            <button
+                              key={booking.id}
+                              type="button"
+                              onClick={() => onSelectBooking(booking)}
+                              className="flex-1 overflow-hidden rounded-[4px] px-1.5 py-1 text-left transition-opacity hover:opacity-90"
+                              style={{
+                                background: done ? "var(--surface-sunk)" : "var(--accent-tint)",
+                                borderLeft: done
+                                  ? "1px solid var(--line)"
+                                  : "2.5px solid var(--accent)",
+                              }}
+                            >
+                              <span
+                                className="block truncate text-[10px] font-semibold"
+                                style={{
+                                  color: done ? "var(--ink-faint)" : "var(--accent-hover)",
+                                }}
+                              >
+                                {booking.clientName}
+                              </span>
+                              <span
+                                className="block truncate text-[9px]"
+                                style={{
+                                  color: "var(--ink-faint)",
+                                }}
+                              >
+                                {booking.service}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
                     );
                   })}
                 </div>

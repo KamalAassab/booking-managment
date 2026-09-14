@@ -13,26 +13,44 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   const initialRole = params.role === "owner" ? "owner" : "staff";
 
   return (
-    <main className="flex min-h-dvh flex-1 items-center justify-center px-4 py-10">
-      <div className="w-full max-w-[380px]">
-        <div className="mb-7 text-center">
-          <p className="t-micro" style={{ color: "var(--accent)" }}>
-            L&apos;Atelier Groupe
-          </p>
-          <h1 className="t-display mt-2">Planning</h1>
-          <p className="t-small mt-1.5" style={{ color: "var(--ink-faint)" }}>
-            Réservations des trois salons
+    <main className="relative flex min-h-dvh flex-1 items-center justify-center overflow-hidden px-4 py-12" style={{ background: "var(--paper)" }}>
+      {/* Ambient luxury warmth */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center"
+      >
+        <div
+          className="h-[500px] w-[500px] rounded-full opacity-40 blur-[100px]"
+          style={{
+            background: "radial-gradient(circle, var(--accent-glow) 0%, transparent 70%)",
+          }}
+        />
+      </div>
+
+      <div className="relative z-10 w-full max-w-[390px]">
+        <div className="mb-8 text-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/logo-transparent.webp"
+            alt="L'Atelier Groupe"
+            className="mx-auto mb-4 h-16 w-auto max-w-[240px] object-contain drop-shadow-sm"
+          />
+          <span className="t-micro rounded-full px-2.5 py-1" style={{ background: "var(--surface-sunk)", color: "var(--accent)" }}>
+            Plateforme de Gestion
+          </span>
+          <h1 className="t-display mt-2 text-[26px]">Planning</h1>
+          <p className="t-small mt-1" style={{ color: "var(--ink-soft)" }}>
+            Réservations des trois salons Casablanca
           </p>
         </div>
 
         <LoginForm initialRole={initialRole} />
 
         <p
-          className="t-small mt-6 text-center"
+          className="t-small mt-6 text-center text-[12.5px]"
           style={{ color: "var(--ink-faint)" }}
         >
-          Poste partagé — déconnectez-vous en fin de journée sur un ordinateur
-          non dédié.
+          Poste partagé — déconnectez-vous en fin de journée sur un ordinateur non dédié.
         </p>
       </div>
     </main>

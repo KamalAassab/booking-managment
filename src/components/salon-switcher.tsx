@@ -1,5 +1,6 @@
 "use client";
 
+import { SalonGlyph } from "@/components/icons";
 import { salonColor, shortName } from "@/lib/salon-display";
 import type { SalonDTO } from "@/lib/types";
 
@@ -42,10 +43,11 @@ export function SalonSwitcher({
               }}
             >
               <span
-                className="block h-1.5 w-1.5 shrink-0 rounded-full"
-                style={{ background: salonColor(s.slug) }}
-                aria-hidden
-              />
+                className="flex h-5 w-5 shrink-0 items-center justify-center"
+                style={{ color: salonColor(s.slug) }}
+              >
+                <SalonGlyph slug={s.slug} size={15} />
+              </span>
               <span className="truncate">{shortName(s.name)}</span>
             </button>
           );
@@ -77,12 +79,13 @@ export function SalonSwitcher({
             }}
           >
             <span
-              className="block h-1.5 w-1.5 shrink-0 rounded-full"
+              className="flex h-4 w-4 shrink-0 items-center justify-center"
               style={{
-                background: active ? salonColor(s.slug) : "transparent",
+                color: salonColor(s.slug),
               }}
-              aria-hidden
-            />
+            >
+              <SalonGlyph slug={s.slug} size={13} />
+            </span>
             {shortName(s.name)}
           </button>
         );
