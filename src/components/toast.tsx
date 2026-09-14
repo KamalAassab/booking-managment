@@ -59,7 +59,7 @@ export function Toast({ message, onDismiss }: Props) {
             rel="noopener noreferrer"
             onClick={onDismiss}
             className="t-small shrink-0 font-semibold underline underline-offset-2"
-            style={{ color: "var(--brass)" }}
+            style={{ color: "var(--accent)" }}
           >
             {message.action.label}
           </a>

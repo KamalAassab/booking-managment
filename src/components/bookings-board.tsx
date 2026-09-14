@@ -5,18 +5,27 @@ import { useRouter } from "next/navigation";
 
 import { BookingSheet } from "@/components/booking-sheet";
 import { DayGrid } from "@/components/day-grid";
-import { DayStrip } from "@/components/day-strip";
-import { ChevronLeft, ChevronRight, Plus, Power } from "@/components/icons";
+import { Bell, Plus, Power, Search } from "@/components/icons";
+import { MonthCalendar } from "@/components/month-calendar";
+import { ScheduledPanel } from "@/components/scheduled-panel";
 import { SalonSwitcher, shortName } from "@/components/salon-switcher";
+import { Sidebar } from "@/components/sidebar";
 import { Toast, type ToastMessage } from "@/components/toast";
+import { WeekGrid } from "@/components/week-grid";
 import { logout } from "@/app/actions/auth";
 import {
   readSalonPreference,
   useDeviceMode,
   writeSalonPreference,
-  type DeviceMode,
 } from "@/lib/device";
-import { addDays, formatLongDate, todayInSalonTz } from "@/lib/time";
+import {
+  addMonths,
+  formatLongDate,
+  monthMatrix,
+  nowMinutesInSalonTz,
+  startOfMonth,
+  todayInSalonTz,
+} from "@/lib/time";
 import type { BookingDTO, SalonDTO } from "@/lib/types";
 
 type Props = {
@@ -33,6 +42,7 @@ export type DialogState =
   | null;
 
 type StreamState = "connecting" | "live" | "offline";
+type ViewMode = "day" | "week" | "month";
 
 /**
  * How often the calendar asks whether anything changed. Two seconds is the
@@ -55,10 +65,15 @@ export function BookingsBoard({
 }: Props) {
   const router = useRouter();
   const [bookings, setBookings] = useState(initialBookings);
+  const [monthBookings, setMonthBookings] = useState<BookingDTO[]>([]);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [mode, setDeviceMode] = useDeviceMode();
   const [stream, setStream] = useState<StreamState>("connecting");
   const [toast, setToast] = useState<ToastMessage | null>(null);
+  const [query, setQuery] = useState("");
+  // Day is the default: exactly the salon's opening hours, the shape a
+  // salon day actually has. Week and month are the zoomed-out alternatives.
+  const [view, setView] = useState<ViewMode>("day");
   const today = todayInSalonTz();
 
   useEffect(() => {
@@ -83,6 +98,54 @@ export function BookingsBoard({
     [router, salon.slug],
   );
 
+  const monthRange = useMemo(() => {
+    const cells = monthMatrix(date);
+    return {
+      from: cells[0]?.date ?? date,
+      to: cells[cells.length - 1]?.date ?? date,
+    };
+  }, [date]);
+
+  const fetchMonth = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/bookings/range?salon=${encodeURIComponent(salon.slug)}&from=${monthRange.from}&to=${monthRange.to}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) return;
+      const data = (await res.json()) as { bookings: BookingDTO[] };
+      setMonthBookings(data.bookings);
+    } catch {
+      // Best-effort: the month grid just shows slightly stale tags until the
+      // next salon/date change retries this.
+    }
+  }, [salon.slug, monthRange.from, monthRange.to]);
+
+  // Mirrors the shape of the watermark-poll effect below (inline async body,
+  // a cancellation flag) rather than calling `fetchMonth` bare — an effect
+  // whose entire body is one memoised call reads to the linter as derivable
+  // state, which this genuinely is not: it is a network fetch.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/bookings/range?salon=${encodeURIComponent(salon.slug)}&from=${monthRange.from}&to=${monthRange.to}`,
+          { cache: "no-store" },
+        );
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as { bookings: BookingDTO[] };
+        if (!cancelled) setMonthBookings(data.bookings);
+      } catch {
+        // Best-effort: the month grid just shows slightly stale tags until
+        // the next salon/date change retries this.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [salon.slug, monthRange.from, monthRange.to]);
+
   const refetch = useCallback(async () => {
     try {
       const res = await fetch(
@@ -96,11 +159,12 @@ export function BookingsBoard({
       if (!res.ok) return;
       const data = (await res.json()) as { bookings: BookingDTO[] };
       setBookings(data.bookings);
+      void fetchMonth();
     } catch {
       // The next poll catches us up; a failed manual refetch is not worth a
       // message to someone who is mid-call.
     }
-  }, [salon.slug, date, router]);
+  }, [salon.slug, date, router, fetchMonth]);
 
   useEffect(() => {
     let cancelled = false;
@@ -192,7 +256,8 @@ export function BookingsBoard({
     [bookings],
   );
 
-  /** The first free slot, so the primary action always has somewhere to go. */
+  /** The first free slot, so the primary action always has somewhere to go.
+   *  On today, skips any slot whose end time has already passed. */
   const firstFreeSlot = useMemo(() => {
     const taken = new Set<number>();
     for (const b of bookings) {
@@ -205,68 +270,86 @@ export function BookingsBoard({
         taken.add(t);
       }
     }
+    const nowMin = date === today ? nowMinutesInSalonTz() : null;
     for (let t = salon.opensAtMin; t < salon.closesAtMin; t += salon.slotMin) {
-      if (!taken.has(t)) return t;
+      if (taken.has(t)) continue;
+      if (nowMin !== null && t + salon.slotMin <= nowMin) continue;
+      return t;
     }
+    // Fallback: day is full or entirely past — opening time (server will reject
+    // if staff try to book it, which is the right outcome).
     return salon.opensAtMin;
-  }, [bookings, salon]);
+  }, [bookings, salon, date, today]);
+
+  const bookingsByDate = useMemo(() => {
+    const map = new Map<string, BookingDTO[]>();
+    for (const b of monthBookings) {
+      const list = map.get(b.bookingDate);
+      if (list) list.push(b);
+      else map.set(b.bookingDate, [b]);
+    }
+    return map;
+  }, [monthBookings]);
+
+  const visibleBookings = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return bookings;
+    return bookings.filter(
+      (b) =>
+        b.clientName.toLowerCase().includes(q) ||
+        b.service.toLowerCase().includes(q) ||
+        b.clientPhone.includes(q),
+    );
+  }, [bookings, query]);
+
+  const hasUpcoming = useMemo(() => {
+    if (date !== today) return false;
+    const nowMin = nowMinutesInSalonTz();
+    return bookings.some(
+      (b) =>
+        b.status === "confirmed" &&
+        b.startMin >= nowMin &&
+        b.startMin <= nowMin + 30,
+    );
+  }, [bookings, date, today]);
 
   return (
-    <div className="flex min-h-dvh flex-col lg:flex-row">
-      {/* ---- Sidebar: desktop only ------------------------------------ */}
-      <aside
-        className="hidden w-[200px] shrink-0 flex-col gap-6 border-r p-5 lg:sticky lg:top-0 lg:flex lg:h-dvh"
-        style={{ borderColor: "var(--line)", background: "var(--surface)" }}
-      >
-        <div>
-          <p className="t-title">Atelier</p>
-          <p className="t-small" style={{ color: "var(--ink-faint)" }}>
-            Planning
-          </p>
-        </div>
+    <div
+      className="relative flex min-h-dvh flex-col lg:flex-row"
+      style={{ background: "var(--paper)" }}
+    >
+      {/* Ambient glow — the one purely atmospheric touch kept from the
+          reference, low enough opacity that it never competes with the
+          grid. */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-x-0 bottom-0 z-0 h-[420px] opacity-70"
+        style={{
+          background:
+            "radial-gradient(ellipse 60% 100% at 50% 100%, var(--accent-tint), transparent 70%)",
+        }}
+      />
 
-        <SalonSwitcher
-          salons={salons}
-          current={salon.slug}
-          onSelect={(slug) => navigate(slug, date)}
-          variant="list"
-        />
+      <Sidebar
+        salons={salons}
+        currentSalon={salon.slug}
+        onSelectSalon={(slug) => navigate(slug, date)}
+        mode={mode}
+        onModeChange={setDeviceMode}
+        role={role}
+      />
 
-        <div className="mt-auto flex flex-col gap-1">
-          <ModeSwitch mode={mode} onChange={setDeviceMode} />
-          {role === "owner" ? (
-            <a
-              href="/owner"
-              className="rounded-[10px] px-3 py-2.5 text-[13px] transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
-              style={{ color: "var(--ink-soft)" }}
-            >
-              Espace propriétaire
-            </a>
-          ) : null}
-          <form action={logout}>
-            <button
-              type="submit"
-              className="flex w-full items-center gap-2 rounded-[10px] px-3 py-2.5 text-left text-[13px] transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
-              style={{ color: "var(--ink-soft)" }}
-            >
-              <Power size={16} />
-              Déconnexion
-            </button>
-          </form>
-        </div>
-      </aside>
-
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="relative z-10 flex min-w-0 flex-1 flex-col">
         {/* ---- Header ------------------------------------------------- */}
         <header
           className="sticky top-0 z-20 border-b px-4 pt-3 md:px-6 lg:px-8"
           style={{
             borderColor: "var(--line)",
-            background: "color-mix(in srgb, var(--surface) 94%, transparent)",
+            background: "color-mix(in srgb, var(--paper) 88%, transparent)",
             backdropFilter: "blur(8px)",
           }}
         >
-          <div className="mx-auto flex max-w-[720px] flex-col gap-3">
+          <div className="mx-auto flex max-w-[1100px] flex-col gap-3 pb-4">
             <div className="flex items-center gap-3 lg:hidden">
               <p className="t-title mr-auto">Atelier</p>
               <LiveDot state={stream} />
@@ -290,99 +373,172 @@ export function BookingsBoard({
               />
             </div>
 
-            <div className="flex items-baseline gap-3">
-              <div className="min-w-0 flex-1">
-                <h1 className="t-title">
-                  <span className="first-letter:uppercase">
-                    {formatLongDate(date)}
-                  </span>
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+              <div className="min-w-0">
+                <h1 className="t-display text-[22px] md:text-[26px]">
+                  Bonjour !
                 </h1>
-                <p className="t-small" style={{ color: "var(--ink-faint)" }}>
+                <p
+                  className="t-small mt-1"
+                  style={{ color: "var(--ink-faint)" }}
+                >
                   <span className="hidden lg:inline">
                     {shortName(salon.name)} ·{" "}
                   </span>
-                  <span data-nums>{activeCount}</span> rendez-vous
+                  <span className="first-letter:uppercase">
+                    {formatLongDate(date)}
+                  </span>{" "}
+                  · <span data-nums>{activeCount}</span> rendez-vous
                   {date === today ? " · aujourd'hui" : ""}
                 </p>
               </div>
 
-              <div className="hidden items-center gap-1 lg:flex">
-                <LiveDot state={stream} />
-              </div>
+              <div className="flex items-center gap-2.5">
+                <div className="hidden items-center gap-1 lg:flex">
+                  <LiveDot state={stream} />
+                </div>
 
-              {/* The arrows are desktop-only: on a phone the day strip below
-                  already moves between days, and duplicating it here was what
-                  squeezed the date into "mardi 8 septem…". */}
-              <div className="hidden items-center gap-0.5 lg:flex">
-                <IconButton
-                  label="Jour précédent"
-                  onClick={() => navigate(salon.slug, addDays(date, -1))}
-                >
-                  <ChevronLeft size={18} />
-                </IconButton>
-                <IconButton
-                  label="Jour suivant"
-                  onClick={() => navigate(salon.slug, addDays(date, 1))}
-                >
-                  <ChevronRight size={18} />
-                </IconButton>
-              </div>
+                {date !== today ? (
+                  <button
+                    type="button"
+                    onClick={() => navigate(salon.slug, today)}
+                    className="t-small shrink-0 rounded-[8px] px-2.5 py-1.5 transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
+                    style={{ color: "var(--accent-hover)" }}
+                  >
+                    Aujourd&apos;hui
+                  </button>
+                ) : null}
 
-              {/* Only offered when it would do something. */}
-              {date !== today ? (
+                <div
+                  className="hidden items-center gap-2 rounded-full px-3.5 py-2 md:flex"
+                  style={{
+                    background: "var(--surface)",
+                    border: "1px solid var(--line)",
+                  }}
+                >
+                  <span style={{ color: "var(--ink-faint)" }}>
+                    <Search size={15} />
+                  </span>
+                  <input
+                    type="search"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Rechercher un client…"
+                    aria-label="Rechercher un rendez-vous"
+                    className="w-[180px] bg-transparent text-[13.5px] outline-none placeholder:text-[color:var(--ink-faint)]"
+                    style={{ color: "var(--ink)" }}
+                  />
+                </div>
+
+                <span
+                  className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
+                  style={{
+                    background: "var(--surface)",
+                    border: "1px solid var(--line)",
+                    color: "var(--ink-soft)",
+                  }}
+                  aria-hidden
+                >
+                  <Bell size={17} />
+                  {hasUpcoming ? (
+                    <span
+                      className="absolute right-2 top-2 block h-[7px] w-[7px] rounded-full"
+                      style={{
+                        background: "var(--accent)",
+                        border: "1.5px solid var(--surface)",
+                      }}
+                    />
+                  ) : null}
+                </span>
+
                 <button
                   type="button"
-                  onClick={() => navigate(salon.slug, today)}
-                  className="t-small shrink-0 rounded-[8px] px-2.5 py-1.5 transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
-                  style={{ color: "var(--brass)" }}
+                  onClick={() =>
+                    setDialog({ kind: "create", startMin: firstFreeSlot })
+                  }
+                  className="btn-primary btn-sm hidden shrink-0 lg:inline-flex"
                 >
-                  Aujourd&apos;hui
+                  <Plus size={16} />
+                  Nouveau
                 </button>
-              ) : null}
-            </div>
-
-            <div className="flex items-center gap-3 pb-3">
-              <div className="min-w-0 flex-1">
-                <DayStrip
-                  date={date}
-                  today={today}
-                  onSelect={(d) => navigate(salon.slug, d)}
-                />
               </div>
-              <button
-                type="button"
-                onClick={() =>
-                  setDialog({ kind: "create", startMin: firstFreeSlot })
-                }
-                className="btn-primary btn-sm hidden shrink-0 lg:inline-flex"
-              >
-                <Plus size={16} />
-                Nouveau
-              </button>
             </div>
           </div>
         </header>
 
-        {/* ---- Grid --------------------------------------------------- */}
+        {/* ---- Calendar + schedule ------------------------------------ */}
         <main className="flex-1 px-4 pb-28 pt-4 md:px-6 lg:px-8 lg:pb-10">
-          <div className="mx-auto max-w-[720px]">
-            <DayGrid
-              salon={salon}
-              date={date}
-              today={today}
-              bookings={bookings}
-              onSelectSlot={(startMin) => setDialog({ kind: "create", startMin })}
-              onSelectBooking={(booking) => setDialog({ kind: "edit", booking })}
-            />
+          <div className="mx-auto flex max-w-[1100px] flex-col gap-4">
+            <ViewSwitcher view={view} onChange={setView} />
 
-            {activeCount === 0 ? (
-              <p
-                className="t-small mt-4 text-center"
-                style={{ color: "var(--ink-faint)" }}
-              >
-                Aucun rendez-vous. Touchez un créneau pour en ajouter un.
-              </p>
-            ) : null}
+            {view === "day" ? (
+              <div className="mx-auto flex w-full max-w-[720px] flex-col gap-4">
+                <DayGrid
+                  salon={salon}
+                  date={date}
+                  today={today}
+                  bookings={bookings}
+                  onSelectSlot={(startMin) =>
+                    setDialog({ kind: "create", startMin })
+                  }
+                  onSelectBooking={(booking) =>
+                    setDialog({ kind: "edit", booking })
+                  }
+                />
+                {activeCount === 0 ? (
+                  <p
+                    className="t-small text-center"
+                    style={{ color: "var(--ink-faint)" }}
+                  >
+                    Aucun rendez-vous. Touchez un créneau pour en ajouter un.
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+                <div className="min-w-0 flex-1">
+                  {view === "week" ? (
+                    <WeekGrid
+                      salon={salon}
+                      date={date}
+                      today={today}
+                      bookingsByDate={bookingsByDate}
+                      onSelectDate={(d) => navigate(salon.slug, d)}
+                      onSelectSlot={(d, startMin) =>
+                        d === date
+                          ? setDialog({ kind: "create", startMin })
+                          : navigate(salon.slug, d)
+                      }
+                      onSelectBooking={(booking) =>
+                        setDialog({ kind: "edit", booking })
+                      }
+                    />
+                  ) : (
+                    <MonthCalendar
+                      date={date}
+                      today={today}
+                      bookingsByDate={bookingsByDate}
+                      onSelectDate={(d) => navigate(salon.slug, d)}
+                      onNavigateMonth={(delta) =>
+                        navigate(salon.slug, startOfMonth(addMonths(date, delta)))
+                      }
+                    />
+                  )}
+                </div>
+
+                <ScheduledPanel
+                  date={date}
+                  salon={salon}
+                  bookings={visibleBookings}
+                  onSelectBooking={(booking) =>
+                    setDialog({ kind: "edit", booking })
+                  }
+                  onCreate={() =>
+                    setDialog({ kind: "create", startMin: firstFreeSlot })
+                  }
+                />
+              </div>
+            )}
           </div>
 
           {/* Live changes arriving from another device are announced rather
@@ -431,31 +587,51 @@ export function BookingsBoard({
   );
 }
 
-function IconButton({
-  label,
-  onClick,
-  children,
+function ViewSwitcher({
+  view,
+  onChange,
 }: {
-  label: string;
-  onClick: () => void;
-  children: React.ReactNode;
+  view: ViewMode;
+  onChange: (view: ViewMode) => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      className="flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
-      style={{ color: "var(--ink-soft)" }}
+    <div
+      role="radiogroup"
+      aria-label="Vue du calendrier"
+      className="inline-flex w-fit gap-0.5 self-start rounded-full p-0.5"
+      style={{ background: "var(--surface-sunk)" }}
     >
-      {children}
-    </button>
+      {(
+        [
+          ["day", "Jour"],
+          ["week", "Semaine"],
+          ["month", "Mois"],
+        ] as const
+      ).map(([value, label]) => (
+        <button
+          key={value}
+          type="button"
+          role="radio"
+          aria-checked={view === value}
+          onClick={() => onChange(value)}
+          className="min-h-[34px] rounded-full px-4 text-[13px] transition-colors duration-[120ms]"
+          style={{
+            background: view === value ? "var(--surface)" : "transparent",
+            boxShadow: view === value ? "var(--shadow-card)" : "none",
+            color: view === value ? "var(--ink)" : "var(--ink-soft)",
+            fontWeight: view === value ? 600 : 500,
+          }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }
 
 function LiveDot({ state }: { state: StreamState }) {
   const map = {
-    live: { label: "En direct", color: "var(--brass)" },
+    live: { label: "En direct", color: "var(--accent)" },
     connecting: { label: "Connexion", color: "var(--ink-faint)" },
     offline: { label: "Hors ligne", color: "var(--ink-faint)" },
   } as const;
@@ -474,52 +650,5 @@ function LiveDot({ state }: { state: StreamState }) {
       />
       <span className="hidden sm:inline">{label}</span>
     </span>
-  );
-}
-
-function ModeSwitch({
-  mode,
-  onChange,
-}: {
-  mode: DeviceMode;
-  onChange: (mode: DeviceMode) => void;
-}) {
-  return (
-    <div
-      role="radiogroup"
-      aria-label="Type de poste"
-      className="mb-2 flex flex-col gap-0.5"
-    >
-      <span className="label mb-1.5">Poste</span>
-      {(
-        [
-          ["front_desk", "Réception"],
-          ["call_center", "Centre d'appels"],
-        ] as const
-      ).map(([value, label]) => (
-        <button
-          key={value}
-          type="button"
-          role="radio"
-          aria-checked={mode === value}
-          onClick={() => onChange(value)}
-          className="flex items-center gap-2 rounded-[10px] px-3 py-2 text-left text-[13px] transition-colors duration-[120ms]"
-          style={{
-            background: mode === value ? "var(--surface-sunk)" : "transparent",
-            color: mode === value ? "var(--ink)" : "var(--ink-soft)",
-            fontWeight: mode === value ? 600 : 400,
-          }}
-        >
-          <span
-            className="block h-1.5 w-1.5 shrink-0 rounded-full"
-            style={{
-              background: mode === value ? "var(--brass)" : "var(--line-strong)",
-            }}
-            aria-hidden
-          />
-          {label}
-        </button>
-      ))}
-    </div>
   );
 }

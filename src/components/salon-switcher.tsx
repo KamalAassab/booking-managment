@@ -1,6 +1,13 @@
 "use client";
 
+import { salonColor, shortName } from "@/lib/salon-display";
 import type { SalonDTO } from "@/lib/types";
+
+// Re-exported for existing importers — the definitions live in
+// lib/salon-display.ts now so a server component (the owner page) can call
+// them too; a "use client" module cannot export a plain function that a
+// server component invokes directly.
+export { salonColor, shortName };
 
 type Props = {
   salons: SalonDTO[];
@@ -9,23 +16,6 @@ type Props = {
   /** Stacked list for the desktop sidebar; segmented track on mobile. */
   variant?: "segmented" | "list";
 };
-
-/**
- * Salon colour is the one place identity colour is used, because it is the
- * one place salons are compared. Inside a single salon's grid the colour
- * would be constant, and a constant carries nothing.
- */
-export function salonColor(slug: string): string {
-  if (slug === "vip") return "var(--salon-vip)";
-  if (slug === "gold") return "var(--salon-gold)";
-  if (slug === "barber") return "var(--salon-barber)";
-  return "var(--ink-soft)";
-}
-
-/** "L'Atelier Gold" -> "Gold". The prefix is constant, so it carries nothing. */
-export function shortName(name: string): string {
-  return name.replace(/^L'Atelier\s*/i, "").replace(/\s*Shop & Spa$/i, "");
-}
 
 export function SalonSwitcher({
   salons,

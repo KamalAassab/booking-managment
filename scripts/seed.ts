@@ -21,13 +21,17 @@ import { hashPassword } from "../src/lib/password";
 
 const { salons, users } = schema;
 
+// Real hours from latelier-groupe's own site data (src/data/services.ts,
+// `branches[].hours`) — every salon is open every day of the week, so a
+// single opens/closes pair per salon is enough; there is no per-weekday
+// variation to model.
 const SALONS = [
   {
     slug: "vip",
     name: "L'Atelier VIP",
     sortOrder: 0,
-    opensAtMin: 9 * 60,
-    closesAtMin: 20 * 60,
+    opensAtMin: 10 * 60,
+    closesAtMin: 22 * 60,
     slotMin: 30,
   },
   {
@@ -35,7 +39,7 @@ const SALONS = [
     name: "L'Atelier Gold",
     sortOrder: 1,
     opensAtMin: 9 * 60,
-    closesAtMin: 20 * 60,
+    closesAtMin: 23 * 60,
     slotMin: 30,
   },
   {
@@ -43,7 +47,7 @@ const SALONS = [
     name: "L'Atelier Barber Shop & Spa",
     sortOrder: 2,
     opensAtMin: 9 * 60,
-    closesAtMin: 21 * 60,
+    closesAtMin: 23 * 60,
     slotMin: 30,
   },
 ];

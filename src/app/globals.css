@@ -2,9 +2,11 @@
 @import "./fonts.css";
 
 /*
- * Token layer. Every value here is specified in docs/DESIGN.md; this file is
- * the implementation, not the argument. If the two disagree, the doc is the
- * intent and this is the bug.
+ * Token layer. Dark-navy, blue-accent theme — the interface was rebuilt
+ * around a reference dashboard mockup, replacing the earlier warm
+ * paper-and-brass system (see docs/DESIGN.md for what that was and why; the
+ * note at its top says what changed and why the doc otherwise stays as
+ * historical reference).
  */
 
 @theme {
@@ -23,68 +25,36 @@
 }
 
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 
-  /* Neutrals carry a green-grey cast, not blue: against brass a blue-grey
-     reads cold and corporate, this reads as paper. */
-  --paper: #fbfbfa;
-  --surface: #ffffff;
-  --surface-sunk: #f4f5f4;
-  --line: #e4e7e5;
-  --line-strong: #cfd4d1;
-  --ink: #14181a;
-  --ink-soft: #5a6570;
-  --ink-faint: #8b959b;
+  /* One fixed dark theme — the reference is a night dashboard, not a
+     light/dark pair, so there is no `prefers-color-scheme` split here. */
+  --paper: #0d1220;
+  --surface: #161d30;
+  --surface-sunk: #0a0e19;
+  --line: #26304a;
+  --line-strong: #384566;
+  --ink: #f1f4fb;
+  --ink-soft: #97a3c4;
+  --ink-faint: #6b7694;
 
-  /* The only warm thing in the interface. At most twice per screen. */
-  --brass: #a87f2e;
-  --brass-hover: #8e6b25;
-  --brass-tint: #faf5e9;
+  /* The one accent, spent on the primary action, the live edge and the
+     selected day — same restraint as the system it replaced, new colour. */
+  --accent: #4c7cf0;
+  --accent-hover: #6690f4;
+  --accent-tint: #182446;
 
-  --danger: #a93b33;
-  --danger-tint: #fcf2f1;
+  --danger: #f0857d;
+  --danger-tint: #2a1620;
 
-  /* Used only where salons are compared — never inside one salon's grid,
-     where a constant colour would carry nothing. */
-  --salon-vip: #6b4e71;
-  --salon-gold: #a87f2e;
-  --salon-barber: #3e6b70;
+  /* Used only where salons are compared — never inside one salon's grid. */
+  --salon-vip: #c39fd1;
+  --salon-gold: #dcb46e;
+  --salon-barber: #8ec3c9;
 
-  --shadow-card: 0 1px 2px rgb(20 24 26 / 0.04), 0 1px 1px rgb(20 24 26 / 0.03);
-  --shadow-sheet: 0 -8px 32px rgb(20 24 26 / 0.12);
-  --shadow-pop: 0 8px 32px rgb(20 24 26 / 0.12);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-
-    --paper: #101315;
-    --surface: #181c1f;
-    --surface-sunk: #0b0d0f;
-    --line: #282d31;
-    --line-strong: #39403f;
-    --ink: #f2f4f3;
-    --ink-soft: #98a3a8;
-    --ink-faint: #6b7478;
-
-    --brass: #c89a3f;
-    --brass-hover: #d8ac52;
-    --brass-tint: #2a2317;
-
-    --danger: #e8908a;
-    --danger-tint: #2b1917;
-
-    --salon-vip: #b99cc0;
-    --salon-gold: #d6b26b;
-    --salon-barber: #8fbdc1;
-
-    /* Shadows do not read on a dark ground; a hairline does the same job
-       honestly, so elevation is expressed as a border instead. */
-    --shadow-card: none;
-    --shadow-sheet: 0 -8px 32px rgb(0 0 0 / 0.5);
-    --shadow-pop: 0 8px 32px rgb(0 0 0 / 0.5);
-  }
+  --shadow-card: 0 6px 20px rgb(0 0 0 / 0.28);
+  --shadow-sheet: 0 -8px 32px rgb(0 0 0 / 0.55);
+  --shadow-pop: 0 20px 44px rgb(0 0 0 / 0.5);
 }
 
 @layer base {
@@ -117,13 +87,13 @@
   /* Used dozens of times a day at speed, including keyboard-only. Never
      removed, never replaced with a colour change alone. */
   :focus-visible {
-    outline: 2px solid var(--brass);
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
     border-radius: 4px;
   }
 
   ::selection {
-    background: var(--brass-tint);
+    background: var(--accent-tint);
     color: var(--ink);
   }
 }
@@ -135,12 +105,7 @@
     background: var(--surface);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-card);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .card {
-      border: 1px solid var(--line);
-    }
+    border: 1px solid var(--line);
   }
 
   /* ---- Type -------------------------------------------------------- */
@@ -219,18 +184,12 @@
   }
 
   .btn-primary {
-    background: var(--brass);
+    background: var(--accent);
     color: #fff;
   }
 
-  @media (prefers-color-scheme: dark) {
-    .btn-primary {
-      color: #14181a;
-    }
-  }
-
   .btn-primary:hover:not(:disabled) {
-    background: var(--brass-hover);
+    background: var(--accent-hover);
   }
 
   .btn-quiet {
@@ -261,7 +220,7 @@
     padding: 10px 12px;
     border-radius: var(--radius-md);
     border: 1px solid var(--line-strong);
-    background: var(--surface);
+    background: var(--surface-sunk);
     color: var(--ink);
     /* Never below 16px: iOS zooms the viewport on focus for anything
        smaller, and that zoom does not undo itself. */
@@ -278,8 +237,8 @@
   }
 
   .field:focus {
-    border-color: var(--brass);
-    box-shadow: 0 0 0 3px var(--brass-tint);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-tint);
   }
 
   .field[aria-invalid="true"] {
@@ -357,8 +316,7 @@
   }
 }
 
-/* Horizontal rails (day strip) scroll without a visible bar — the snap and
-   the partially-visible next cell already say it moves. */
+/* Horizontal rails scroll without a visible bar. */
 .no-scrollbar {
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -369,8 +327,7 @@
 }
 
 /* A pointer device reveals the free-slot affordance on hover. A touch screen
-   has no hover, so the mark is always faintly present there instead — a
-   free slot with no affordance at all is not discoverable. */
+   has no hover, so the mark is always faintly present there instead. */
 .slot-mark {
   opacity: 0;
 }

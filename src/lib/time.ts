@@ -188,6 +188,73 @@ export function conflictsWithExisting(
   );
 }
 
+/** First of the month a date falls in, as YYYY-MM-DD. */
+export function startOfMonth(dateStr: string): string {
+  if (!isValidDateString(dateStr)) return dateStr;
+  const [y, m] = dateStr.split("-").map(Number);
+  return `${y}-${String(m).padStart(2, "0")}-01`;
+}
+
+/**
+ * Shift a YYYY-MM-DD string by whole months. The day is clamped to the
+ * target month's last day (31 Jan + 1 month -> 28/29 Feb, never a rollover
+ * into March) rather than relying on `Date`'s own overflow behaviour.
+ */
+export function addMonths(dateStr: string, months: number): string {
+  if (!isValidDateString(dateStr) || !Number.isFinite(months)) return dateStr;
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const totalMonthIndex = (m - 1) + Math.trunc(months);
+  const targetYear = y + Math.floor(totalMonthIndex / 12);
+  const targetMonth = ((totalMonthIndex % 12) + 12) % 12;
+  const lastDayOfTargetMonth = new Date(
+    Date.UTC(targetYear, targetMonth + 1, 0),
+  ).getUTCDate();
+  const day = Math.min(d, lastDayOfTargetMonth);
+  return new Date(Date.UTC(targetYear, targetMonth, day))
+    .toISOString()
+    .slice(0, 10);
+}
+
+/**
+ * The full set of weeks (Sunday first) covering the month a date falls in —
+ * 35 or 42 cells, always a whole number of 7-day rows, with the leading and
+ * trailing days from adjacent months included so the grid has no gaps.
+ */
+export function monthMatrix(
+  dateStr: string,
+): { date: string; inMonth: boolean }[] {
+  if (!isValidDateString(dateStr)) return [];
+  const [y, m] = dateStr.split("-").map(Number);
+  const firstWeekday = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
+  const daysInThisMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const totalCells = firstWeekday + daysInThisMonth <= 35 ? 35 : 42;
+
+  const cells: { date: string; inMonth: boolean }[] = [];
+  for (let i = 0; i < totalCells; i++) {
+    const d = new Date(Date.UTC(y, m - 1, 1 - firstWeekday + i));
+    cells.push({
+      date: d.toISOString().slice(0, 10),
+      inMonth: d.getUTCMonth() === m - 1,
+    });
+  }
+  return cells;
+}
+
+/** "2025-09-08" -> { month: "septembre", year: "2025" } */
+export function formatMonthYear(
+  dateStr: string,
+  locale = "fr-FR",
+): { month: string; year: string } {
+  if (!isValidDateString(dateStr)) return { month: "", year: "" };
+  const [y, m] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, 1));
+  const month = new Intl.DateTimeFormat(locale, {
+    month: "long",
+    timeZone: "UTC",
+  }).format(dt);
+  return { month, year: String(y) };
+}
+
 export function formatLongDate(dateStr: string, locale = "fr-FR"): string {
   if (!isValidDateString(dateStr)) return String(dateStr ?? "");
   const [y, m, d] = dateStr.split("-").map(Number);

@@ -7,10 +7,19 @@ import { Check, Close, WhatsApp } from "@/components/icons";
 import type { ToastMessage } from "@/components/toast";
 import type { DeviceMode } from "@/lib/device";
 import { formatPhoneForDisplay } from "@/lib/phone";
-import { conflictsWithExisting, minutesToLabel, slotsForSalon } from "@/lib/time";
+import { groupedServicesForSalon } from "@/lib/services-catalog";
+import {
+  conflictsWithExisting,
+  minutesToLabel,
+  nowMinutesInSalonTz,
+  slotsForSalon,
+  todayInSalonTz,
+} from "@/lib/time";
 import type { BookingDTO, SalonDTO } from "@/lib/types";
-import { DURATION_OPTIONS, SERVICES } from "@/lib/validation";
+import { DURATION_OPTIONS } from "@/lib/validation";
 import { buildWhatsAppLink } from "@/lib/whatsapp";
+
+const CUSTOM_SERVICE = "Autre";
 
 type Props = {
   state: NonNullable<DialogState>;
@@ -42,26 +51,53 @@ export function BookingSheet({
 }: Props) {
   const editing = state.kind === "edit" ? state.booking : null;
 
+  const catalog = useMemo(
+    () => groupedServicesForSalon(salon.slug),
+    [salon.slug],
+  );
+  const catalogEntries = useMemo(
+    () => catalog.flatMap((group) => group.items),
+    [catalog],
+  );
+  const isCatalogService = (name: string) =>
+    catalogEntries.some((entry) => entry.name === name);
+
   const [clientName, setClientName] = useState(editing?.clientName ?? "");
   const [clientPhone, setClientPhone] = useState(
     editing ? formatPhoneForDisplay(editing.clientPhone) : "",
   );
   const [service, setService] = useState(
-    editing && !SERVICES.includes(editing.service as (typeof SERVICES)[number])
-      ? "Autre"
-      : (editing?.service ?? SERVICES[0]),
+    editing && !isCatalogService(editing.service)
+      ? CUSTOM_SERVICE
+      : (editing?.service ?? catalogEntries[0]?.name ?? CUSTOM_SERVICE),
   );
   const [customService, setCustomService] = useState(
-    editing && !SERVICES.includes(editing.service as (typeof SERVICES)[number])
-      ? editing.service
-      : "",
+    editing && !isCatalogService(editing.service) ? editing.service : "",
   );
-  const [startMin, setStartMin] = useState(
-    state.kind === "create" ? state.startMin : state.booking.startMin,
-  );
+  const [startMin, setStartMin] = useState(() => {
+    if (state.kind === "edit") return state.booking.startMin;
+    // When creating on today, clamp to first future slot so the default is
+    // never a time that has already passed.
+    const all = slotsForSalon(salon);
+    const todayStr = todayInSalonTz();
+    const nowMin = date === todayStr ? nowMinutesInSalonTz() : null;
+    if (nowMin === null) return state.startMin;
+    const future = all.filter((s) => s + salon.slotMin > nowMin);
+    return future.includes(state.startMin) ? state.startMin : (future[0] ?? state.startMin);
+  });
   const [durationMin, setDurationMin] = useState(
-    editing?.durationMin ?? salon.slotMin,
+    editing?.durationMin ??
+      catalogEntries.find((entry) => entry.name === service)?.durationMin ??
+      salon.slotMin,
   );
+
+  /** Picking a real service pre-fills its standard duration; staff can still
+   * override it below. */
+  function handleServiceChange(name: string) {
+    setService(name);
+    const entry = catalogEntries.find((e) => e.name === name);
+    if (entry) setDurationMin(entry.durationMin);
+  }
   const [notes, setNotes] = useState(editing?.notes ?? "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -108,8 +144,18 @@ export function BookingSheet({
     };
   }, [onClose]);
 
-  const slots = useMemo(() => slotsForSalon(salon), [salon]);
-  const resolvedService = service === "Autre" ? customService.trim() : service;
+  const allSlots = useMemo(() => slotsForSalon(salon), [salon]);
+
+  // Past-slot filtering — only for create; editing a past booking to fix
+  // details (name, notes, status) must remain possible.
+  const todayStr = todayInSalonTz();
+  const nowMin = date === todayStr ? nowMinutesInSalonTz() : null;
+  const slots = !editing && nowMin !== null
+    ? allSlots.filter((s) => s + salon.slotMin > nowMin)
+    : allSlots;
+
+  const resolvedService =
+    service === CUSTOM_SERVICE ? customService.trim() : service;
 
   // Advisory only — the database exclusion constraint is the real guarantee.
   // This just stops an agent submitting something we already know will fail.
@@ -119,6 +165,9 @@ export function BookingSheet({
     editing?.id,
   );
   const overflowsClosing = startMin + durationMin > salon.closesAtMin;
+  const isPastBooking =
+    !editing &&
+    (date < todayStr || (nowMin !== null && startMin + salon.slotMin <= nowMin));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -133,7 +182,7 @@ export function BookingSheet({
     // Popup blockers only allow window.open inside the click that triggered
     // it, so for the call-centre flow the tab is opened synchronously here
     // and pointed at the wa.me URL once the server confirms the booking.
-    const wantsWhatsApp = mode === "call_center" && !editing;
+    const wantsWhatsApp = !editing;
     const waTab = wantsWhatsApp ? window.open("", "_blank") : null;
 
     setBusy(true);
@@ -387,17 +436,22 @@ export function BookingSheet({
                 id="service"
                 className="field"
                 value={service}
-                onChange={(e) => setService(e.target.value)}
+                onChange={(e) => handleServiceChange(e.target.value)}
               >
-                {SERVICES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
+                {catalog.map((group) => (
+                  <optgroup key={group.category} label={group.category}>
+                    {group.items.map((entry) => (
+                      <option key={entry.name} value={entry.name}>
+                        {entry.name}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
+                <option value={CUSTOM_SERVICE}>{CUSTOM_SERVICE}</option>
               </select>
             </div>
 
-            {service === "Autre" ? (
+            {service === CUSTOM_SERVICE ? (
               <div>
                 <label className="label" htmlFor="customService">
                   Précisez
@@ -427,6 +481,12 @@ export function BookingSheet({
                 placeholder="Allergie, préférence, remarque…"
               />
             </div>
+
+            {isPastBooking ? (
+              <Advisory>
+                Ce créneau est dans le passé — la réservation sera refusée.
+              </Advisory>
+            ) : null}
 
             {localConflict ? (
               <Advisory>
@@ -467,7 +527,7 @@ export function BookingSheet({
               <button
                 type="submit"
                 className="btn-primary flex-1"
-                disabled={busy || localConflict || overflowsClosing}
+                disabled={busy || isPastBooking || localConflict || overflowsClosing}
               >
                 {busy ? "…" : editing ? "Enregistrer" : "Réserver"}
               </button>
@@ -518,7 +578,7 @@ function Advisory({ children }: { children: React.ReactNode }) {
   return (
     <p
       className="t-small rounded-[10px] px-3 py-2.5"
-      style={{ background: "var(--brass-tint)", color: "var(--ink-soft)" }}
+      style={{ background: "var(--accent-tint)", color: "var(--ink-soft)" }}
     >
       {children}
     </p>

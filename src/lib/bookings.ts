@@ -75,6 +75,30 @@ export async function listBookingsForSalons(
 }
 
 /**
+ * A month's worth of bookings for one salon, for the calendar grid's day
+ * tags. Cancelled rows are excluded here rather than in the caller — a
+ * cancelled slot is free again, and the grid has no use for it.
+ */
+export async function listBookingsInRange(
+  salonId: string,
+  from: string,
+  to: string,
+): Promise<Booking[]> {
+  return db
+    .select()
+    .from(bookings)
+    .where(
+      and(
+        eq(bookings.salonId, salonId),
+        gte(bookings.bookingDate, from),
+        lte(bookings.bookingDate, to),
+        ne(bookings.status, "cancelled"),
+      ),
+    )
+    .orderBy(asc(bookings.bookingDate), asc(bookings.startMin));
+}
+
+/**
  * A cheap change-detection watermark for the live-update poll: the newest
  * updated_at plus a row count. The count catches the one case a max() cannot
  * — a row disappearing — even though this app only soft-cancels today.

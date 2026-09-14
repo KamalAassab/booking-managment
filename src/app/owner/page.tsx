@@ -1,12 +1,12 @@
 import { logout } from "@/app/actions/auth";
 import { ChevronLeft, ChevronRight, Check, Power } from "@/components/icons";
 import { OwnerPasswordForms } from "@/components/owner-password-forms";
-import { salonColor, shortName } from "@/components/salon-switcher";
 import type { Booking, Salon } from "@/db/schema";
 import { requireOwner } from "@/lib/auth";
 import { listBookingsForSalons, listSalons } from "@/lib/bookings";
 import { setupNoticeFor } from "@/lib/page-errors";
 import { formatPhoneForDisplay } from "@/lib/phone";
+import { salonColor, shortName } from "@/lib/salon-display";
 import { salonWhatsAppNumber } from "@/lib/salon-contact";
 import {
   addDays,

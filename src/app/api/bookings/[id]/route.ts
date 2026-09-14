@@ -7,6 +7,7 @@ import {
   unauthorized,
 } from "@/lib/api";
 import { cancelBooking, updateBooking } from "@/lib/bookings";
+import { todayInSalonTz } from "@/lib/time";
 import { toBookingDTO } from "@/lib/types";
 import { updateBookingSchema } from "@/lib/validation";
 
@@ -35,6 +36,16 @@ export async function PATCH(
     if (!parsed.success) {
       return jsonNoStore(
         { error: parsed.error.issues[0]?.message ?? "Données invalides." },
+        400,
+      );
+    }
+
+    if (
+      parsed.data.bookingDate !== undefined &&
+      parsed.data.bookingDate < todayInSalonTz()
+    ) {
+      return jsonNoStore(
+        { error: "Impossible de reporter à une date passée." },
         400,
       );
     }

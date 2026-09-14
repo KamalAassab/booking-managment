@@ -36,7 +36,7 @@ function Feedback({ state }: { state: ActionState }) {
       <p
         role="status"
         className="t-small mt-3 rounded-[10px] px-3 py-2.5"
-        style={{ background: "var(--brass-tint)", color: "var(--ink)" }}
+        style={{ background: "var(--accent-tint)", color: "var(--ink)" }}
       >
         {state.success}
       </p>

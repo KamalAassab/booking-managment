@@ -6,6 +6,7 @@ import {
   unauthorized,
 } from "@/lib/api";
 import { createBooking, getSalonBySlug, listBookings } from "@/lib/bookings";
+import { nowMinutesInSalonTz, todayInSalonTz } from "@/lib/time";
 import { toBookingDTO } from "@/lib/types";
 import { createBookingSchema, listQuerySchema } from "@/lib/validation";
 import { buildWhatsAppLink } from "@/lib/whatsapp";
@@ -55,22 +56,24 @@ export async function POST(request: Request) {
       );
     }
 
+    const today = todayInSalonTz();
+    if (parsed.data.bookingDate < today) {
+      return jsonNoStore({ error: "Impossible de réserver une date passée." }, 400);
+    }
+    if (parsed.data.bookingDate === today && parsed.data.startMin < nowMinutesInSalonTz()) {
+      return jsonNoStore({ error: "Ce créneau est déjà passé." }, 400);
+    }
+
     const { booking, salon } = await createBooking(parsed.data);
 
-    // The wa.me link is only built for the call-centre flow. Front-desk staff
-    // already have the client's Instagram/WhatsApp thread open — that is how
-    // the booking reached them — so they reply there by hand (brief §3).
-    const whatsappUrl =
-      booking.channel === "call_center"
-        ? buildWhatsAppLink({
-            clientName: booking.clientName,
-            clientPhone: booking.clientPhone,
-            salonName: salon.name,
-            bookingDate: booking.bookingDate,
-            startMin: booking.startMin,
-            service: booking.service,
-          })
-        : null;
+    const whatsappUrl = buildWhatsAppLink({
+      clientName: booking.clientName,
+      clientPhone: booking.clientPhone,
+      salonName: salon.name,
+      bookingDate: booking.bookingDate,
+      startMin: booking.startMin,
+      service: booking.service,
+    });
 
     return jsonNoStore({ booking: toBookingDTO(booking), whatsappUrl }, 201);
   } catch (error) {

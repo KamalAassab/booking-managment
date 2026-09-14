@@ -13,9 +13,11 @@ export const viewport: Viewport = {
   initialScale: 1,
   // Staff must be able to zoom a phone screen in a bright salon.
   maximumScale: 5,
+  // One fixed dark theme now (see globals.css) — both entries point at the
+  // same colour so the browser chrome matches regardless of OS setting.
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#181c1f" },
+    { media: "(prefers-color-scheme: light)", color: "#0d1220" },
+    { media: "(prefers-color-scheme: dark)", color: "#0d1220" },
   ],
 };
 

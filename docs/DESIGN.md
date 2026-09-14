@@ -1,5 +1,17 @@
 # Atelier Planning — design system
 
+> **Superseded, in part.** The `/bookings` screen was rebuilt around a
+> reference dashboard mockup: a month calendar with a "Programme" panel
+> replaced the day-column grid this document calls "the signature" (§1, §7,
+> §8), and the palette moved from warm paper-and-brass to a fixed dark
+> navy-and-blue theme (§3) — the token *names* below (`--brass`, `--paper`…)
+> no longer match `globals.css`, which now defines `--accent` in their
+> place. What did **not** change: the accessibility floor (§10), the
+> anonymity of bookings, the writing rules (§11), and the underlying data
+> model. Read this document for the *reasoning* that still applies; read
+> `globals.css` and `src/components/{month-calendar,scheduled-panel,sidebar}.tsx`
+> for what actually ships today.
+
 The interface for a staff-only booking tool used by four call-centre agents,
 three front-desk people and one owner, across three salons in El Jadida.
 

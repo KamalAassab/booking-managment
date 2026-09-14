@@ -16,7 +16,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
     <main className="flex min-h-dvh flex-1 items-center justify-center px-4 py-10">
       <div className="w-full max-w-[380px]">
         <div className="mb-7 text-center">
-          <p className="t-micro" style={{ color: "var(--brass)" }}>
+          <p className="t-micro" style={{ color: "var(--accent)" }}>
             L&apos;Atelier Groupe
           </p>
           <h1 className="t-display mt-2">Planning</h1>

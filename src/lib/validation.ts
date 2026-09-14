@@ -1,32 +1,22 @@
 import { z } from "zod";
 
-import { MINUTES_IN_DAY, isValidDateString } from "./time";
+import {
+  MINUTES_IN_DAY,
+  isValidDateString,
+  nowMinutesInSalonTz,
+  todayInSalonTz,
+} from "./time";
 
-export const MIN_PASSWORD_LENGTH = 8;
+export const MIN_PASSWORD_LENGTH = 4;
 /** scrypt hashes the whole input; an unbounded field is a cheap CPU DoS. */
 export const MAX_PASSWORD_LENGTH = 200;
 
-export const SERVICES = [
-  "Coupe",
-  "Coupe + Brushing",
-  "Coloration",
-  "Mèches / Balayage",
-  "Lissage",
-  "Soin cheveux",
-  "Coiffure mariée",
-  "Manucure",
-  "Pédicure",
-  "Épilation",
-  "Soin visage",
-  "Maquillage",
-  "Hammam / Gommage",
-  "Massage",
-  "Barbe / Rasage",
-  "Coupe homme",
-  "Autre",
+// Per-salon service names now come from lib/services-catalog.ts (the real
+// catalogue). These durations are every distinct value that catalogue uses,
+// so a service's real duration is always a selectable option.
+export const DURATION_OPTIONS = [
+  10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 75, 90, 120, 150, 180,
 ] as const;
-
-export const DURATION_OPTIONS = [15, 30, 45, 60, 90, 120, 150, 180] as const;
 
 export const MIN_DURATION_MIN = 5;
 export const MAX_DURATION_MIN = 480;
@@ -91,7 +81,19 @@ export const createBookingSchema = z
   .refine(endsSameDay.check, {
     message: endsSameDay.message,
     path: ["durationMin"],
-  });
+  })
+  .refine((v) => v.bookingDate >= todayInSalonTz(), {
+    message: "Impossible de réserver une date passée.",
+    path: ["bookingDate"],
+  })
+  .refine(
+    (v) =>
+      v.bookingDate > todayInSalonTz() || v.startMin >= nowMinutesInSalonTz(),
+    {
+      message: "Ce créneau est déjà passé.",
+      path: ["startMin"],
+    },
+  );
 
 export const updateBookingSchema = z
   .object({
@@ -127,11 +129,24 @@ export const updateBookingSchema = z
       v.durationMin === undefined ||
       endsSameDay.check({ startMin: v.startMin, durationMin: v.durationMin }),
     { message: endsSameDay.message, path: ["durationMin"] },
+  )
+  .refine(
+    (v) => v.bookingDate === undefined || v.bookingDate >= todayInSalonTz(),
+    {
+      message: "Impossible de reporter à une date passée.",
+      path: ["bookingDate"],
+    },
   );
 
 export const listQuerySchema = z.object({
   salon: z.string().min(1).max(24),
   date: dateString,
+});
+
+export const rangeQuerySchema = z.object({
+  salon: z.string().min(1).max(24),
+  from: dateString,
+  to: dateString,
 });
 
 export const passwordSchema = z
@@ -142,3 +157,4 @@ export const passwordSchema = z
 export type CreateBookingInput = z.infer<typeof createBookingSchema>;
 export type UpdateBookingInput = z.infer<typeof updateBookingSchema>;
 export type ListQueryInput = z.infer<typeof listQuerySchema>;
+export type RangeQueryInput = z.infer<typeof rangeQuerySchema>;

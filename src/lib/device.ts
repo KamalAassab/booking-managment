@@ -15,6 +15,8 @@ import { useCallback, useSyncExternalStore } from "react";
 const SALON_KEY = "atelier.salon";
 const MODE_KEY = "atelier.mode";
 const MODE_EVENT = "atelier:mode";
+const SIDEBAR_KEY = "atelier.sidebar.collapsed";
+const SIDEBAR_EVENT = "atelier:sidebar";
 
 export type DeviceMode = "front_desk" | "call_center";
 
@@ -77,4 +79,38 @@ export function useDeviceMode(): [DeviceMode, (mode: DeviceMode) => void] {
   }, []);
 
   return [mode, setMode];
+}
+
+function readSidebarCollapsed(): boolean {
+  return safeGet(SIDEBAR_KEY) === "1";
+}
+
+function subscribeToSidebar(onChange: () => void): () => void {
+  window.addEventListener("storage", onChange);
+  window.addEventListener(SIDEBAR_EVENT, onChange);
+  return () => {
+    window.removeEventListener("storage", onChange);
+    window.removeEventListener(SIDEBAR_EVENT, onChange);
+  };
+}
+
+/**
+ * Same read-external-store shape as useDeviceMode above, for the same
+ * reason: the desktop sidebar's collapsed state is a per-device preference
+ * in localStorage, and only useSyncExternalStore reads one of those without
+ * a server/client mismatch on the first paint.
+ */
+export function useSidebarCollapsed(): [boolean, (collapsed: boolean) => void] {
+  const collapsed = useSyncExternalStore(
+    subscribeToSidebar,
+    readSidebarCollapsed,
+    () => false,
+  );
+
+  const setCollapsed = useCallback((next: boolean) => {
+    safeSet(SIDEBAR_KEY, next ? "1" : "0");
+    window.dispatchEvent(new Event(SIDEBAR_EVENT));
+  }, []);
+
+  return [collapsed, setCollapsed];
 }

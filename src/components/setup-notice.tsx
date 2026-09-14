@@ -21,7 +21,7 @@ export function SetupNotice({ title, message, steps, detail }: Props) {
   return (
     <main className="flex min-h-dvh flex-1 items-center justify-center p-4">
       <div className="card w-full max-w-[520px] p-6 md:p-8">
-        <p className="t-micro" style={{ color: "var(--brass)" }}>
+        <p className="t-micro" style={{ color: "var(--accent)" }}>
           L&apos;Atelier Groupe
         </p>
         <h1 className="t-title mt-3">{title}</h1>
