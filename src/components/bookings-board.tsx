@@ -238,6 +238,64 @@ export function BookingsBoard({
     };
   }, [date, salon.slug]);
 
+  // Prefetch all other salons for the current date so salon transitions are 0s instant
+  useEffect(() => {
+    const otherSalons = salons.filter((s) => s.slug !== salon.slug);
+    for (const other of otherSalons) {
+      const cacheKey = `${other.slug}:${date}`;
+      if (!bookingsCacheRef.current.has(cacheKey)) {
+        fetch(
+          `/api/bookings?salon=${encodeURIComponent(other.slug)}&date=${encodeURIComponent(date)}`,
+          { cache: "no-store" },
+        )
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (data?.bookings) {
+              bookingsCacheRef.current.set(cacheKey, data.bookings);
+            }
+          })
+          .catch(() => {});
+      }
+    }
+  }, [salons, salon.slug, date]);
+
+  // Seed bookingsCacheRef for every day in monthBookings so any day clicked is already cached
+  useEffect(() => {
+    if (monthBookings.length === 0) return;
+    const grouped = new Map<string, BookingDTO[]>();
+    for (const b of monthBookings) {
+      const list = grouped.get(b.bookingDate);
+      if (list) list.push(b);
+      else grouped.set(b.bookingDate, [b]);
+    }
+    for (const [d, dayList] of grouped.entries()) {
+      const key = `${salon.slug}:${d}`;
+      if (!bookingsCacheRef.current.has(key)) {
+        bookingsCacheRef.current.set(key, dayList);
+      }
+    }
+  }, [monthBookings, salon.slug]);
+
+  const prefetchSalon = useCallback(
+    (slug: string) => {
+      const cacheKey = `${slug}:${date}`;
+      if (!bookingsCacheRef.current.has(cacheKey)) {
+        fetch(
+          `/api/bookings?salon=${encodeURIComponent(slug)}&date=${encodeURIComponent(date)}`,
+          { cache: "no-store" },
+        )
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (data?.bookings) {
+              bookingsCacheRef.current.set(cacheKey, data.bookings);
+            }
+          })
+          .catch(() => {});
+      }
+    },
+    [date],
+  );
+
   const monthRange = useMemo(() => {
     const cells = monthMatrix(date);
     return {
@@ -570,8 +628,12 @@ export function BookingsBoard({
       if (list) list.push(b);
       else map.set(b.bookingDate, [b]);
     }
+    // Instant fallback: ensures current day always renders without delay
+    if (!map.has(date) && bookings.length > 0) {
+      map.set(date, bookings);
+    }
     return map;
-  }, [monthBookings]);
+  }, [monthBookings, date, bookings]);
 
   const visibleBookings = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -616,6 +678,7 @@ export function BookingsBoard({
         salons={salons}
         currentSalon={salon.slug}
         onSelectSalon={(slug) => navigate(slug, date)}
+        onPrefetchSalon={prefetchSalon}
         mode={mode}
         onModeChange={setDeviceMode}
         role={role}

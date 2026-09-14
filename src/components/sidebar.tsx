@@ -29,6 +29,7 @@ type Props = {
   salons?: SalonDTO[];
   currentSalon?: string;
   onSelectSalon?: (slug: string) => void;
+  onPrefetchSalon?: (slug: string) => void;
   mode?: DeviceMode;
   onModeChange?: (mode: DeviceMode) => void;
   role?: "staff" | "owner";
@@ -41,6 +42,7 @@ export function Sidebar({
   salons = DEFAULT_SALONS,
   currentSalon = "vip",
   onSelectSalon,
+  onPrefetchSalon,
   mode,
   onModeChange,
   role = "owner",
@@ -128,6 +130,8 @@ export function Sidebar({
       <nav aria-label="Navigation" className="flex flex-col gap-1">
         <Link
           href="/bookings"
+          prefetch={true}
+          onMouseEnter={() => router.prefetch("/bookings")}
           title="Planning"
           className="flex items-center gap-2.5 rounded-[10px] px-3 py-2.5 text-[13px] font-semibold transition-colors duration-[120ms]"
           style={{
@@ -142,6 +146,8 @@ export function Sidebar({
 
         <Link
           href="/clients"
+          prefetch={true}
+          onMouseEnter={() => router.prefetch("/clients")}
           title="Clients"
           className="flex items-center gap-2.5 rounded-[10px] px-3 py-2.5 text-left text-[13px] font-medium transition-colors duration-[120ms] hover:bg-zinc-800/80 hover:text-white"
           style={{
@@ -158,6 +164,8 @@ export function Sidebar({
           <>
             <Link
               href="/owner/services"
+              prefetch={true}
+              onMouseEnter={() => router.prefetch("/owner/services")}
               title="Services"
               className="flex items-center gap-2.5 rounded-[10px] px-3 py-2.5 text-left text-[13px] font-medium transition-colors duration-[120ms] hover:bg-zinc-800/80 hover:text-white"
               style={{
@@ -172,6 +180,8 @@ export function Sidebar({
 
             <Link
               href="/owner"
+              prefetch={true}
+              onMouseEnter={() => router.prefetch("/owner")}
               title="Espace propriétaire"
               className="flex items-center gap-2.5 rounded-[10px] px-3 py-2.5 text-left text-[13px] font-medium transition-colors duration-[120ms] hover:bg-zinc-800/80 hover:text-white"
               style={{
@@ -203,6 +213,8 @@ export function Sidebar({
                   key={s.slug}
                   type="button"
                   onClick={() => handleSalonClick(s.slug)}
+                  onMouseEnter={() => onPrefetchSalon?.(s.slug)}
+                  onFocus={() => onPrefetchSalon?.(s.slug)}
                   title={shortName(s.name)}
                   aria-current={isActive ? "page" : undefined}
                   className="flex w-full flex-col items-center justify-center gap-1.5 rounded-[10px] py-2.5 transition-colors duration-[120ms]"
@@ -238,6 +250,8 @@ export function Sidebar({
                   key={s.slug}
                   type="button"
                   onClick={() => handleSalonClick(s.slug)}
+                  onMouseEnter={() => onPrefetchSalon?.(s.slug)}
+                  onFocus={() => onPrefetchSalon?.(s.slug)}
                   aria-current={isActive ? "page" : undefined}
                   className="flex items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13px] transition-colors duration-[120ms]"
                   style={{
