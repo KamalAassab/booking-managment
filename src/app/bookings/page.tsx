@@ -61,7 +61,6 @@ export default async function BookingsPage({
 
   return (
     <BookingsBoard
-      key={`${salon.slug}:${date}`}
       salons={salons.map(toSalonDTO)}
       salon={toSalonDTO(salon)}
       date={date}

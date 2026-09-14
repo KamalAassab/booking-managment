@@ -8,7 +8,7 @@ import { Check, Close, RotateCcw, WhatsApp } from "@/components/icons";
 import { SelectDropdown } from "@/components/ui/select";
 import type { ToastMessage } from "@/components/toast";
 import type { DeviceMode } from "@/lib/device";
-import { formatPhoneForDisplay } from "@/lib/phone";
+import { formatPhoneForDisplay, normalizePhone } from "@/lib/phone";
 import { groupedServicesForSalon } from "@/lib/services-catalog";
 import {
   conflictsWithExisting,
@@ -32,6 +32,21 @@ type Props = {
   onClose: () => void;
   onChanged: () => void;
   onToast: (toast: ToastMessage) => void;
+  onOptimisticCreate?: (booking: BookingDTO) => {
+    rollback: () => void;
+    commit: (serverBooking: BookingDTO) => void;
+  };
+  onOptimisticUpdate?: (booking: BookingDTO) => {
+    rollback: () => void;
+    commit: (serverBooking: BookingDTO) => void;
+  };
+  onOptimisticStatus?: (
+    bookingId: string,
+    status: BookingDTO["status"],
+  ) => {
+    rollback: () => void;
+    commit: () => void;
+  };
 };
 
 /**
@@ -50,6 +65,9 @@ export function BookingSheet({
   onClose,
   onChanged,
   onToast,
+  onOptimisticCreate,
+  onOptimisticUpdate,
+  onOptimisticStatus,
 }: Props) {
   const editing = state.kind === "edit" ? state.booking : null;
 
@@ -189,92 +207,180 @@ export function BookingSheet({
       return;
     }
 
-    // Popup blockers only allow window.open inside the click that triggered
-    // it, so for the call-centre flow the tab is opened synchronously here
-    // and pointed at the wa.me URL once the server confirms the booking.
+    const norm = normalizePhone(clientPhone);
+    const resolvedPhone = norm.ok ? norm.e164 : clientPhone.trim();
+
     const wantsWhatsApp = !editing;
     const waTab = wantsWhatsApp ? window.open("", "_blank") : null;
 
-    setBusy(true);
-    try {
-      const res = editing
-        ? await fetch(`/api/bookings/${editing.id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              clientName: clientName.trim(),
-              clientPhone,
-              startMin,
-              durationMin,
-              service: resolvedService,
-              notes,
-            }),
-          })
-        : await fetch("/api/bookings", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              salonSlug: salon.slug,
-              clientName: clientName.trim(),
-              clientPhone,
-              bookingDate: date,
-              startMin,
-              durationMin,
-              service: resolvedService,
-              notes,
-              channel: mode,
-            }),
-          });
-
-      const data = (await res.json()) as {
-        error?: string;
-        whatsappUrl?: string | null;
-        booking?: BookingDTO;
+    if (editing) {
+      const updatedBooking: BookingDTO = {
+        ...editing,
+        clientName: clientName.trim(),
+        clientPhone: resolvedPhone,
+        startMin,
+        durationMin,
+        service: resolvedService,
+        notes,
       };
 
-      if (!res.ok) {
-        waTab?.close();
-        setError(data.error ?? "Erreur inattendue.");
-        // A 409 means someone else won the slot — pull the fresh day in so
-        // the grid behind already shows who took it.
-        if (res.status === 409) onChanged();
-        return;
-      }
+      const opt = onOptimisticUpdate?.(updatedBooking);
+      onToast({
+        tone: "success",
+        text: "Rendez-vous mis à jour.",
+      });
+      onClose();
 
-      if (waTab && data.whatsappUrl) {
-        waTab.location.href = data.whatsappUrl;
+      try {
+        const res = await fetch(`/api/bookings/${editing.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            clientName: clientName.trim(),
+            clientPhone: resolvedPhone,
+            startMin,
+            durationMin,
+            service: resolvedService,
+            notes,
+          }),
+        });
+        const data = (await res.json()) as { error?: string; booking?: BookingDTO };
+        if (!res.ok) {
+          opt?.rollback();
+          onToast({
+            tone: "error",
+            text: data.error ?? "Erreur lors de la mise à jour.",
+          });
+          onChanged();
+          return;
+        }
+        if (data.booking) {
+          opt?.commit(data.booking);
+        } else {
+          opt?.commit(updatedBooking);
+        }
+      } catch {
+        opt?.rollback();
+        onToast({
+          tone: "error",
+          text: "Connexion perdue. Modifications annulées.",
+        });
+        onChanged();
+      }
+    } else {
+      const optimisticId = `opt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const optimisticBooking: BookingDTO = {
+        id: optimisticId,
+        salonId: salon.id,
+        clientName: clientName.trim(),
+        clientPhone: resolvedPhone,
+        bookingDate: date,
+        startMin,
+        durationMin,
+        service: resolvedService,
+        status: "confirmed",
+        channel: mode,
+        notes,
+      };
+
+      const opt = onOptimisticCreate?.(optimisticBooking);
+
+      const clientWaUrl = buildWhatsAppLink({
+        clientName: optimisticBooking.clientName,
+        clientPhone: optimisticBooking.clientPhone,
+        salonName: salon.name,
+        salonSlug: salon.slug,
+        bookingDate: date,
+        startMin,
+        durationMin,
+        service: resolvedService,
+        price,
+        notes,
+      });
+
+      if (waTab && clientWaUrl) {
+        waTab.location.href = clientWaUrl;
         onToast({
           tone: "success",
           text: "Rendez-vous enregistré. Envoyez le message dans l'onglet ouvert.",
         });
-      } else if (wantsWhatsApp && data.whatsappUrl) {
-        // Tab was blocked — hand the agent a link instead of losing the step.
+      } else if (wantsWhatsApp && clientWaUrl) {
         onToast({
           tone: "success",
           text: "Rendez-vous enregistré.",
-          action: { label: "Ouvrir WhatsApp", href: data.whatsappUrl },
+          action: { label: "Ouvrir WhatsApp", href: clientWaUrl },
         });
       } else {
         onToast({
           tone: "success",
-          text: editing ? "Rendez-vous mis à jour." : "Rendez-vous enregistré.",
+          text: "Rendez-vous enregistré.",
         });
       }
-
-      onChanged();
       onClose();
-    } catch {
-      waTab?.close();
-      setError("Connexion perdue. Vérifiez le réseau et réessayez.");
-    } finally {
-      setBusy(false);
+
+      try {
+        const res = await fetch("/api/bookings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            salonSlug: salon.slug,
+            clientName: clientName.trim(),
+            clientPhone: resolvedPhone,
+            bookingDate: date,
+            startMin,
+            durationMin,
+            service: resolvedService,
+            notes,
+            channel: mode,
+          }),
+        });
+
+        const data = (await res.json()) as {
+          error?: string;
+          whatsappUrl?: string | null;
+          booking?: BookingDTO;
+        };
+
+        if (!res.ok) {
+          waTab?.close();
+          opt?.rollback();
+          onToast({
+            tone: "error",
+            text: data.error ?? "Ce créneau vient d'être réservé sur un autre poste.",
+          });
+          onChanged();
+          return;
+        }
+
+        if (data.booking) {
+          opt?.commit(data.booking);
+        }
+      } catch {
+        waTab?.close();
+        opt?.rollback();
+        onToast({
+          tone: "error",
+          text: "Connexion perdue. Réservation annulée.",
+        });
+        onChanged();
+      }
     }
   }
 
   async function mutateStatus(status: "cancelled" | "done" | "confirmed") {
     if (!editing || busy) return;
-    setBusy(true);
-    setError(null);
+    const opt = onOptimisticStatus?.(editing.id, status);
+    onToast({
+      tone: "success",
+      text:
+        status === "cancelled"
+          ? "Rendez-vous annulé."
+          : status === "done"
+          ? "Rendez-vous marqué comme terminé."
+          : "Rendez-vous rétabli (non terminé).",
+    });
+    onClose();
+
     try {
       const res =
         status === "cancelled"
@@ -286,24 +392,22 @@ export function BookingSheet({
             });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) {
-        setError(data.error ?? "Erreur inattendue.");
+        opt?.rollback();
+        onToast({
+          tone: "error",
+          text: data.error ?? "Erreur inattendue.",
+        });
+        onChanged();
         return;
       }
+      opt?.commit();
+    } catch {
+      opt?.rollback();
       onToast({
-        tone: "success",
-        text:
-          status === "cancelled"
-            ? "Rendez-vous annulé."
-            : status === "done"
-            ? "Rendez-vous marqué comme terminé."
-            : "Rendez-vous rétabli (non terminé).",
+        tone: "error",
+        text: "Connexion perdue. Action annulée.",
       });
       onChanged();
-      onClose();
-    } catch {
-      setError("Connexion perdue. Vérifiez le réseau et réessayez.");
-    } finally {
-      setBusy(false);
     }
   }
 
