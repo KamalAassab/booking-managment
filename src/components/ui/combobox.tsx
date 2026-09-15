@@ -1,8 +1,13 @@
 "use client";
 
+/* eslint-disable @typescript-eslint/no-explicit-any --
+   A generic compound component: its parts share one React context, which
+   cannot carry a type parameter, so `any` is the default that lets untyped
+   JSX usage (`<ComboboxList>{(item) => …}</ComboboxList>`) compile. */
+
 import * as React from "react";
 import { createContext, useContext, useEffect, useId, useRef, useState } from "react";
-import { Check, ChevronDown, Search } from "@/components/icons";
+import { Check, ChevronDown } from "@/components/icons";
 
 interface ComboboxContextType<T = any> {
   search: string;

@@ -2,328 +2,190 @@
 
 import { useMemo } from "react";
 
-import { addDays, minutesToLabel, nowMinutesInSalonTz, slotsForSalon } from "@/lib/time";
+import { describeBooking } from "@/components/booking-card";
+import { ArrowUpRight, Check, Plus } from "@/components/icons";
+import { bookingPhase, occupancy } from "@/lib/day-layout";
+import { formatShortDate, minutesToLabel, weekDates } from "@/lib/time";
 import type { BookingDTO, SalonDTO } from "@/lib/types";
 
 type Props = {
   salon: SalonDTO;
   date: string;
   today: string;
+  nowMin: number;
   bookingsByDate: Map<string, BookingDTO[]>;
-  onSelectDate: (date: string) => void;
-  onSelectSlot: (date: string, startMin: number) => void;
+  /** Ids matching the search box, or null when nothing is searched. */
+  matches: ((booking: BookingDTO) => boolean) | null;
+  loading: boolean;
+  onOpenDay: (date: string) => void;
+  onCreateOn: (date: string) => void;
   onSelectBooking: (booking: BookingDTO) => void;
 };
 
-const ROW_PX = 44;
-const RAIL_PX = 48;
-/** Below this, a day column reading a client's name is not worth the squeeze. */
-const COL_MIN_PX = 108;
+/** A column shows this many before handing over to the day view. */
+const VISIBLE = 10;
+/** On a phone the seven days are stacked, so each stays short. */
+const VISIBLE_PHONE = 3;
 
-const WEEKDAY_FMT = new Intl.DateTimeFormat("fr-FR", {
-  weekday: "short",
-  timeZone: "UTC",
-});
+const WEEKDAY_FMT = new Intl.DateTimeFormat("fr-FR", { weekday: "short", timeZone: "UTC" });
 
-function dayParts(dateStr: string) {
+function weekdayShort(dateStr: string): string {
   const [y, m, d] = dateStr.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  return {
-    weekday: WEEKDAY_FMT.format(dt).replace(".", "").toUpperCase(),
-    day: String(d),
-  };
+  return WEEKDAY_FMT.format(new Date(Date.UTC(y, m - 1, d)));
 }
 
 /**
- * The week — seven day-columns sharing one time rail, for the staff member
- * who thinks in "this week" rather than one day at a time. Sunday first, so
- * it reads the same direction as the month view.
+ * The week as seven day cards: how full each day is at a glance (count and
+ * occupancy bar), and who is booked in time order. A card's head opens that
+ * day's timeline; seven columns side by side on wide screens, stacked on a
+ * phone. Time-proportional columns were tried before and could not show
+ * services running at the same time in a 140px column.
  */
 export function WeekGrid({
   salon,
   date,
   today,
+  nowMin,
   bookingsByDate,
-  onSelectDate,
-  onSelectSlot,
+  matches,
+  loading,
+  onOpenDay,
+  onCreateOn,
   onSelectBooking,
 }: Props) {
-  const weekDates = useMemo(() => {
-    const [y, m, d] = date.split("-").map(Number);
-    const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
-    return Array.from({ length: 7 }, (_, i) => addDays(date, i - weekday));
-  }, [date]);
+  const days = useMemo(() => weekDates(date), [date]);
 
-  const slots = useMemo(() => slotsForSalon(salon), [salon]);
-  const nowMin = nowMinutesInSalonTz();
+  const columns = useMemo(
+    () =>
+      days.map((d) => {
+        const all = [...(bookingsByDate.get(d) ?? [])].sort(
+          (a, b) => a.startMin - b.startMin || a.id.localeCompare(b.id),
+        );
+        return {
+          date: d,
+          all,
+          shown: matches ? all.filter(matches) : all,
+          load: occupancy(all, salon),
+        };
+      }),
+    [days, bookingsByDate, matches, salon],
+  );
 
-  const activeByDate = useMemo(() => {
-    const map = new Map<string, Map<number, BookingDTO[]>>();
-    for (const d of weekDates) {
-      const byStart = new Map<number, BookingDTO[]>();
-      for (const b of bookingsByDate.get(d) ?? []) {
-        if (b.status !== "cancelled") {
-          const arr = byStart.get(b.startMin) ?? [];
-          arr.push(b);
-          byStart.set(b.startMin, arr);
-        }
-      }
-      map.set(d, byStart);
-    }
-    return map;
-  }, [weekDates, bookingsByDate]);
-
-  const coveredByDate = useMemo(() => {
-    const map = new Map<string, Set<number>>();
-    for (const [d, byStart] of activeByDate) {
-      const set = new Set<number>();
-      for (const [startMin, bList] of byStart) {
-        for (const b of bList) {
-          for (
-            let t = b.startMin + salon.slotMin;
-            t < b.startMin + b.durationMin;
-            t += salon.slotMin
-          ) {
-            // Only consider covered if no new booking starts at t
-            if (!byStart.has(t)) {
-              set.add(t);
-            }
-          }
-        }
-      }
-      map.set(d, set);
-    }
-    return map;
-  }, [activeByDate, salon.slotMin]);
-
-  if (slots.length === 0) {
-    return (
-      <p className="card p-5" style={{ color: "var(--ink-soft)" }}>
-        Les horaires de ce salon ne définissent aucun créneau.
-      </p>
-    );
-  }
+  const weekTotal = columns.reduce((sum, c) => sum + c.all.length, 0);
 
   return (
-    <section className="card overflow-hidden p-0">
-      <div className="no-scrollbar overflow-x-auto">
-        <div style={{ minWidth: RAIL_PX + weekDates.length * COL_MIN_PX }}>
-          {/* Day headers */}
-          <div
-            className="grid border-b"
-            style={{
-              gridTemplateColumns: `${RAIL_PX}px repeat(${weekDates.length}, 1fr)`,
-              borderColor: "var(--line)",
-            }}
-          >
-            <div />
-            {weekDates.map((d) => {
-              const { weekday, day } = dayParts(d);
-              const isToday = d === today;
-              const isSelected = d === date;
-              return (
-                <button
-                  key={d}
-                  type="button"
-                  onClick={() => onSelectDate(d)}
-                  aria-current={isSelected ? "date" : undefined}
-                  className="flex flex-col items-center gap-0.5 py-2.5 transition-colors duration-[120ms]"
-                  style={{
-                    background: isToday
-                      ? "var(--accent)"
-                      : isSelected
-                        ? "var(--accent-tint)"
-                        : "transparent",
-                  }}
-                >
-                  <span
-                    className="text-[10.5px] font-semibold tracking-[0.03em]"
-                    style={{
-                      color: isToday ? "rgb(255 255 255 / 0.85)" : "var(--ink-faint)",
-                    }}
-                  >
-                    {weekday}
-                  </span>
-                  <span
-                    className="text-[13px] font-semibold"
-                    style={{ color: isToday ? "#fff" : "var(--ink)" }}
-                    data-nums
-                  >
-                    {day}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+    <section aria-label="Semaine" className="flex flex-col gap-3">
+      {!loading && weekTotal === 0 ? (
+        <p className="t-small" style={{ color: "var(--ink-faint)" }}>
+          Aucun rendez-vous cette semaine.
+        </p>
+      ) : null}
 
-          {/* Grid body */}
-          <div
-            className="relative grid"
-            style={{
-              gridTemplateColumns: `${RAIL_PX}px repeat(${weekDates.length}, 1fr)`,
-              gridAutoRows: `${ROW_PX}px`,
-            }}
-          >
-            {slots.map((startMin, i) => {
-              const isPast = startMin + salon.slotMin <= nowMin;
-              return (
-                <div
-                  key={`rail-${startMin}`}
-                  className="flex items-start justify-end pr-2 pt-1 text-[10.5px]"
-                  style={{
-                    gridColumn: 1,
-                    gridRow: i + 1,
-                    color: "var(--ink-faint)",
-                    borderTop: i === 0 ? "none" : "1px solid var(--line)",
-                    opacity: isPast ? 0.55 : 1,
-                  }}
-                  data-nums
-                >
-                  {minutesToLabel(startMin)}
+      <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 xl:gap-2">
+        {columns.map((col) => {
+          const isToday = col.date === today;
+          const isPast = col.date < today;
+          const hidden = col.shown.length - VISIBLE;
+          const count = col.all.length;
+          return (
+            <article
+              key={col.date}
+              className="wk-day"
+              data-today={isToday ? "" : undefined}
+              data-selected={col.date === date ? "" : undefined}
+              data-past={isPast ? "" : undefined}
+            >
+              <button
+                type="button"
+                onClick={() => onOpenDay(col.date)}
+                className="wk-head"
+                aria-label={`Ouvrir ${formatShortDate(col.date)}, ${count} rendez-vous`}
+              >
+                <span className="flex w-full items-baseline gap-1.5">
+                  <span className="text-[12px] font-semibold uppercase tracking-[0.04em]" style={{ color: isToday ? "var(--accent-ink)" : "var(--ink-soft)" }}>
+                    {weekdayShort(col.date)}
+                  </span>
+                  <span className="text-[20px] font-semibold leading-6" data-nums>
+                    {Number(col.date.slice(8))}
+                  </span>
+                  <span className="ml-auto flex items-center gap-1 text-[12px] font-medium" style={{ color: "var(--ink-faint)" }}>
+                    {loading && count === 0 ? "" : count === 0 ? "libre" : `${count} rdv`}
+                    <ArrowUpRight size={14} />
+                  </span>
+                </span>
+                <span className="wk-load" aria-hidden>
+                  <span style={{ width: `${col.load}%` }} />
+                </span>
+              </button>
+
+              {loading && count === 0 ? (
+                <div className="flex flex-col gap-1.5 p-2">
+                  <div className="skeleton h-[46px]" />
+                  <div className="skeleton h-[46px]" />
                 </div>
-              );
-            })}
-
-            {weekDates.map((d, colIndex) => {
-              const isPastDay = d < today;
-              const byStart = activeByDate.get(d) ?? new Map<number, BookingDTO[]>();
-              const covered = coveredByDate.get(d) ?? new Set<number>();
-
-              return (
-                <div key={d} className="contents">
-                  {slots.map((startMin, i) => (
-                    <div
-                      key={`bg-${d}-${startMin}`}
-                      style={{
-                        gridColumn: colIndex + 2,
-                        gridRow: i + 1,
-                        borderTop: i === 0 ? "none" : "1px solid var(--line)",
-                        borderLeft: "1px solid var(--line)",
-                      }}
-                    />
-                  ))}
-
-                  {slots.map((startMin, i) => {
-                    if (covered.has(startMin)) return null;
-                    const bookings = byStart.get(startMin) ?? [];
-
-                    if (bookings.length === 0) {
-                      const isPastSlot =
-                        isPastDay ||
-                        (d === today && startMin + salon.slotMin <= nowMin);
-                      return (
-                        <button
-                          key={`slot-${d}-${startMin}`}
-                          type="button"
-                          onClick={isPastSlot ? undefined : () => onSelectSlot(d, startMin)}
-                          disabled={isPastSlot}
-                          aria-label={`Réserver le ${d} à ${minutesToLabel(startMin)}`}
-                          className="m-0.5 rounded-[6px] transition-colors duration-[120ms] hover:bg-[color:var(--accent-tint)] disabled:cursor-default disabled:hover:bg-transparent"
-                          style={{
-                            gridColumn: colIndex + 2,
-                            gridRow: i + 1,
-                            opacity: isPastSlot ? 0.35 : 1,
-                          }}
-                        />
-                      );
-                    }
-
-                    if (bookings.length === 1) {
-                      const booking = bookings[0];
-                      const span = Math.max(1, Math.ceil(booking.durationMin / salon.slotMin));
-                      const done = booking.status === "done";
-                      return (
-                        <button
-                          key={booking.id}
-                          type="button"
-                          onClick={() => onSelectBooking(booking)}
-                          className="m-0.5 overflow-hidden rounded-[6px] px-1.5 py-1 text-left"
-                          style={{
-                            gridColumn: colIndex + 2,
-                            gridRow: `${i + 1} / span ${span}`,
-                            background: done ? "var(--surface-sunk)" : "var(--accent-tint)",
-                            borderLeft: done
-                              ? "1px solid var(--line)"
-                              : "2.5px solid var(--accent)",
-                          }}
-                        >
-                          <span
-                            className="block truncate text-[10.5px] font-semibold"
-                            style={{
-                              color: done ? "var(--ink-faint)" : "var(--accent-hover)",
-                            }}
-                          >
-                            {booking.clientName}
-                          </span>
-                          <span
-                            className="block truncate text-[9.5px]"
-                            style={{
-                              color: "var(--ink-faint)",
-                            }}
-                          >
-                            {booking.service}
-                          </span>
-                        </button>
-                      );
-                    }
-
-                    // Multiple concurrent bookings starting at this slot
-                    const maxSpan = Math.max(
-                      1,
-                      ...bookings.map((b) => Math.ceil(b.durationMin / salon.slotMin)),
-                    );
-
+              ) : col.shown.length > 0 ? (
+                <ol className="flex flex-col gap-1.5 p-2">
+                  {col.shown.slice(0, VISIBLE).map((b, index) => {
+                    const phase = bookingPhase(b, today, nowMin);
                     return (
-                      <div
-                        key={`multi-${d}-${startMin}`}
-                        className="m-0.5 flex flex-col gap-1 overflow-hidden rounded-[6px] p-0.5"
-                        style={{
-                          gridColumn: colIndex + 2,
-                          gridRow: `${i + 1} / span ${maxSpan}`,
-                        }}
-                      >
-                        {bookings.map((booking) => {
-                          const done = booking.status === "done";
-                          return (
-                            <button
-                              key={booking.id}
-                              type="button"
-                              onClick={() => onSelectBooking(booking)}
-                              className="flex-1 overflow-hidden rounded-[4px] px-1.5 py-1 text-left transition-opacity hover:opacity-90"
-                              style={{
-                                background: done ? "var(--surface-sunk)" : "var(--accent-tint)",
-                                borderLeft: done
-                                  ? "1px solid var(--line)"
-                                  : "2.5px solid var(--accent)",
-                              }}
-                            >
-                              <span
-                                className="block truncate text-[10px] font-semibold"
-                                style={{
-                                  color: done ? "var(--ink-faint)" : "var(--accent-hover)",
-                                }}
-                              >
-                                {booking.clientName}
+                      <li key={b.id} className={index >= VISIBLE_PHONE ? "hidden md:block" : undefined}>
+                        <button
+                          type="button"
+                          onClick={() => onSelectBooking(b)}
+                          className="bk w-full py-1.5"
+                          data-phase={phase}
+                          aria-label={describeBooking(b, phase)}
+                          title={describeBooking(b, phase)}
+                        >
+                          <span className="bk-name text-[13px]">
+                            <span className="shrink-0" data-nums style={{ color: "var(--ink-soft)" }}>
+                              {minutesToLabel(b.startMin)}
+                            </span>
+                            {phase === "done" ? (
+                              <span className="shrink-0" style={{ color: "var(--success)" }}>
+                                <Check size={13} />
                               </span>
-                              <span
-                                className="block truncate text-[9px]"
-                                style={{
-                                  color: "var(--ink-faint)",
-                                }}
-                              >
-                                {booking.service}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
+                            ) : null}
+                            <span className="truncate">{b.clientName}</span>
+                          </span>
+                          <span className="bk-line text-[12px]">{b.service}</span>
+                        </button>
+                      </li>
                     );
                   })}
-                </div>
-              );
-            })}
-          </div>
-        </div>
+                </ol>
+              ) : matches && count > 0 ? (
+                <p className="t-small px-3 py-3" style={{ color: "var(--ink-faint)" }}>
+                  Aucun résultat
+                </p>
+              ) : null}
+
+              <div className="mt-auto flex flex-col gap-1 px-2 pb-2">
+                {col.shown.length > VISIBLE_PHONE ? (
+                  <button type="button" onClick={() => onOpenDay(col.date)} className="wk-more md:hidden">
+                    Voir les {col.shown.length - VISIBLE_PHONE} autres
+                  </button>
+                ) : null}
+                {hidden > 0 ? (
+                  <button type="button" onClick={() => onOpenDay(col.date)} className="wk-more hidden md:inline-flex">
+                    Voir les {hidden} autres
+                  </button>
+                ) : null}
+                {!isPast ? (
+                  <button
+                    type="button"
+                    onClick={() => onCreateOn(col.date)}
+                    className="wk-more"
+                    aria-label={`Nouveau rendez-vous le ${formatShortDate(col.date)}`}
+                  >
+                    <Plus size={15} />
+                    Réserver
+                  </button>
+                ) : null}
+              </div>
+            </article>
+          );
+        })}
       </div>
     </section>
   );

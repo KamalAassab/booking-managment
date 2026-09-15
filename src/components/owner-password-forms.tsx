@@ -13,7 +13,7 @@ import { MIN_PASSWORD_LENGTH } from "@/lib/validation";
 function Submit({ label }: { label: string }) {
   const { pending } = useFormStatus();
   return (
-    <button type="submit" className="btn-primary" disabled={pending}>
+    <button type="submit" className="btn-primary mt-auto w-full" disabled={pending}>
       {pending ? "Enregistrement…" : label}
     </button>
   );
@@ -56,9 +56,9 @@ export function OwnerPasswordForms() {
   );
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <form action={staffAction} className="card p-5">
-        <h3 className="mb-4 text-sm font-semibold">
+    <div className="grid gap-3 md:grid-cols-2">
+      <form action={staffAction} className="flex flex-col rounded-[12px] border p-4" style={{ borderColor: "var(--line)" }}>
+        <h3 className="mb-3 text-[14px] font-semibold">
           Mot de passe du personnel (partagé)
         </h3>
 
@@ -92,8 +92,8 @@ export function OwnerPasswordForms() {
         <Feedback state={staffState} />
       </form>
 
-      <form action={ownerAction} className="card p-5">
-        <h3 className="mb-4 text-sm font-semibold">Votre mot de passe</h3>
+      <form action={ownerAction} className="flex flex-col rounded-[12px] border p-4" style={{ borderColor: "var(--line)" }}>
+        <h3 className="mb-3 text-[14px] font-semibold">Votre mot de passe</h3>
 
         <label className="label" htmlFor="owner-current">
           Mot de passe actuel

@@ -1,10 +1,11 @@
 import "server-only";
 
-import { desc, eq, ilike, or, sql } from "drizzle-orm";
+import { desc, eq, ilike, or } from "drizzle-orm";
 
 import { db } from "@/db";
-import { bookings, salons, type Booking } from "@/db/schema";
+import { bookings, salons } from "@/db/schema";
 import { formatPhoneForDisplay } from "./phone";
+import { todayInSalonTz } from "./time";
 
 export type ClientSummary = {
   clientName: string;
@@ -14,8 +15,13 @@ export type ClientSummary = {
   doneBookings: number;
   confirmedBookings: number;
   cancelledBookings: number;
+  /** The most recent booking of any kind, future ones included: for sorting by activity. */
   lastBookingDate: string;
   lastService: string;
+  /** The latest day the client actually came (or was due), never a future date. */
+  lastVisitDate: string | null;
+  /** The next confirmed booking from today on, if any. */
+  nextBooking: { bookingDate: string; startMin: number; service: string } | null;
   salonsVisited: string[];
   recentBookings: {
     id: string;
@@ -70,9 +76,13 @@ export async function listAllClients(): Promise<ClientSummary[]> {
     cancelledBookings: number;
     lastBookingDate: string;
     lastService: string;
+    lastVisitDate: string | null;
+    nextBooking: ClientSummary["nextBooking"];
     salonsSet: Set<string>;
     recentBookings: ClientSummary["recentBookings"];
   }>();
+
+  const today = todayInSalonTz();
 
   for (const b of allBookings) {
     const key = b.clientPhone.trim() || b.clientName.trim().toLowerCase();
@@ -89,6 +99,8 @@ export async function listAllClients(): Promise<ClientSummary[]> {
         cancelledBookings: 0,
         lastBookingDate: b.bookingDate,
         lastService: b.service,
+        lastVisitDate: null,
+        nextBooking: null,
         salonsSet: new Set<string>(),
         recentBookings: [],
       };
@@ -101,6 +113,16 @@ export async function listAllClients(): Promise<ClientSummary[]> {
     else if (b.status === "cancelled") existing.cancelledBookings++;
 
     if (b.salonName) existing.salonsSet.add(b.salonName);
+
+    // Rows arrive newest first: the first past one is the last visit, and
+    // the last upcoming one seen is the soonest.
+    if (b.status !== "cancelled") {
+      if (b.bookingDate < today || (b.bookingDate === today && b.status === "done")) {
+        existing.lastVisitDate ??= b.bookingDate;
+      } else if (b.status === "confirmed") {
+        existing.nextBooking = { bookingDate: b.bookingDate, startMin: b.startMin, service: b.service };
+      }
+    }
 
     if (existing.recentBookings.length < 10) {
       existing.recentBookings.push({
@@ -126,6 +148,8 @@ export async function listAllClients(): Promise<ClientSummary[]> {
     cancelledBookings: c.cancelledBookings,
     lastBookingDate: c.lastBookingDate,
     lastService: c.lastService,
+    lastVisitDate: c.lastVisitDate,
+    nextBooking: c.nextBooking,
     salonsVisited: Array.from(c.salonsSet),
     recentBookings: c.recentBookings,
   }));
@@ -137,11 +161,24 @@ export async function listAllClients(): Promise<ClientSummary[]> {
 }
 
 /**
+ * The typed text as a "contains" pattern. `%`, `_` and `\` are LIKE syntax,
+ * so they are escaped: a search for "100%" must not match every client.
+ */
+function containsPattern(text: string): string {
+  return `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+}
+
+/**
  * Searches clients by name or phone for fast autocomplete suggestions.
  */
 export async function searchClientSuggestions(query: string): Promise<ClientSuggestion[]> {
   const q = query.trim();
   if (!q) return [];
+  const pattern = containsPattern(q);
+  // Phones are stored as +212..., but people type them the national way:
+  // "0612 34" is looked up as "+212612" plus the rest of its digits.
+  const digits = q.replace(/[\s.\-/()]/g, "");
+  const national = /^0\d{2,}$/.test(digits) ? containsPattern(`+212${digits.slice(1)}`) : null;
 
   const raw = await db
     .select({
@@ -153,8 +190,9 @@ export async function searchClientSuggestions(query: string): Promise<ClientSugg
     .from(bookings)
     .where(
       or(
-        ilike(bookings.clientName, `%${q}%`),
-        ilike(bookings.clientPhone, `%${q}%`),
+        ilike(bookings.clientName, pattern),
+        ilike(bookings.clientPhone, pattern),
+        ...(national ? [ilike(bookings.clientPhone, national)] : []),
       ),
     )
     .orderBy(desc(bookings.bookingDate))

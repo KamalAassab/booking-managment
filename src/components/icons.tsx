@@ -56,6 +56,32 @@ export const ChevronDown = (p: IconProps) => (
   </Svg>
 );
 
+export const ArrowUpRight = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M7 17 17 7M8 7h9v9" />
+  </Svg>
+);
+
+export const Note = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M5 4h10l4 4v12H5z" />
+    <path d="M15 4v4h4M8.5 12.5h7M8.5 16h5" />
+  </Svg>
+);
+
+export const Layers = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m12 4 8.5 4.25L12 12.5 3.5 8.25z" />
+    <path d="m3.5 12.25 8.5 4.25 8.5-4.25M3.5 16.25l8.5 4.25 8.5-4.25" />
+  </Svg>
+);
+
+export const Menu = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 7h16M4 12h16M4 17h16" />
+  </Svg>
+);
+
 export const Plus = (p: IconProps) => (
   <Svg {...p}>
     <path d="M12 5v14M5 12h14" />

@@ -5,14 +5,21 @@ import {
   addDays,
   conflictsWithExisting,
   daysBetween,
+  formatDateRange,
+  formatDayTitle,
   formatLongDate,
+  formatShortDate,
   isValidDateString,
   labelToMinutes,
   minutesToLabel,
+  monthMatrix,
   nowMinutesInSalonTz,
   rangesOverlap,
+  relativeDayLabel,
   slotsForSalon,
   todayInSalonTz,
+  weekDates,
+  weekdayIndex,
 } from "@/lib/time";
 
 describe("isValidDateString", () => {
@@ -356,5 +363,56 @@ describe("formatLongDate", () => {
   it("returns the input rather than throwing on a bad date", () => {
     expect(formatLongDate("not-a-date")).toBe("not-a-date");
     expect(() => formatLongDate("")).not.toThrow();
+  });
+});
+
+describe("weeks start on Monday", () => {
+  it("numbers weekdays from Monday", () => {
+    expect(weekdayIndex("2026-09-14")).toBe(0); // lundi
+    expect(weekdayIndex("2026-09-20")).toBe(6); // dimanche
+  });
+
+  it("gives the Monday-to-Sunday week around a date, across a month end", () => {
+    expect(weekDates("2026-09-30")).toEqual([
+      "2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04",
+    ]);
+    expect(weekDates("2026-09-20")[0]).toBe("2026-09-14");
+  });
+
+  it("lays a month out in whole Monday-first weeks that contain every day of it", () => {
+    for (const date of ["2026-02-10", "2026-03-01", "2026-06-30", "2026-09-15", "2027-08-01"]) {
+      const cells = monthMatrix(date);
+      expect(cells.length % 7).toBe(0);
+      expect(weekdayIndex(cells[0].date)).toBe(0);
+      const month = date.slice(0, 7);
+      const inMonth = cells.filter((c) => c.inMonth).map((c) => c.date);
+      expect(inMonth.every((d) => d.startsWith(month))).toBe(true);
+      expect(inMonth[0]).toBe(`${month}-01`);
+      expect(daysBetween(inMonth[0], inMonth[inMonth.length - 1]) + 1).toBe(inMonth.length);
+    }
+  });
+});
+
+describe("calendar titles", () => {
+  it("names a day without the year unless it is another year", () => {
+    expect(formatDayTitle("2026-09-15", "2026-09-10")).toBe("mardi 15 septembre");
+    expect(formatDayTitle("2027-01-04", "2026-09-10")).toBe("lundi 4 janvier 2027");
+    expect(formatDayTitle("nope", "2026-09-10")).toBe("nope");
+  });
+
+  it("shortens a day for tight spaces", () => {
+    expect(formatShortDate("2026-09-15")).toMatch(/^mar\.? 15 sept\.?$/);
+  });
+
+  it("names a week inside one month and across two", () => {
+    expect(formatDateRange("2026-09-14", "2026-09-20")).toBe("14 au 20 septembre");
+    expect(formatDateRange("2026-09-28", "2026-10-04")).toBe("28 septembre au 4 octobre");
+  });
+
+  it("says today, tomorrow and yesterday", () => {
+    expect(relativeDayLabel("2026-09-15", "2026-09-15")).toBe("Aujourd'hui");
+    expect(relativeDayLabel("2026-09-16", "2026-09-15")).toBe("Demain");
+    expect(relativeDayLabel("2026-09-14", "2026-09-15")).toBe("Hier");
+    expect(relativeDayLabel("2026-09-20", "2026-09-15")).toBeNull();
   });
 });

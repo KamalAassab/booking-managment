@@ -1,72 +1,102 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import Link from "next/link";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
-import {
-  Calendar,
-  Check,
-  ChevronRight,
-  Clock,
-  Close,
-  Phone,
-  Plus,
-  Search,
-  User,
-  WhatsApp,
-} from "@/components/icons";
-import type { ClientSummary } from "@/lib/clients";
-import { formatLongDate, minutesToLabel } from "@/lib/time";
-import { buildWhatsAppLink } from "@/lib/whatsapp";
+import { ArrowUpRight, Check, ChevronRight, Close, Plus, Search, WhatsApp } from "@/components/icons";
 import { SelectDropdown } from "@/components/ui/select";
+import type { ClientSummary } from "@/lib/clients";
+import { formatDuration } from "@/lib/day-layout";
+import { waDigits } from "@/lib/phone";
+import { minutesToLabel } from "@/lib/time";
 
 type Props = {
   initialClients: ClientSummary[];
+  today: string;
 };
 
-type FilterSalon = "all" | string;
 type SortBy = "bookings" | "recent" | "name";
+type Loyalty = "all" | "frequent" | "upcoming";
 
-export function ClientsList({ initialClients }: Props) {
+/** Rows drawn at a time: 706 cards at once took seconds to paint. */
+const PAGE = 60;
+
+const DATE_FMT = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", timeZone: "UTC" });
+const DATE_YEAR_FMT = new Intl.DateTimeFormat("fr-FR", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+function shortDate(date: string, today: string): string {
+  const [y, m, d] = date.split("-").map(Number);
+  const value = new Date(Date.UTC(y, m - 1, d));
+  return (date.slice(0, 4) === today.slice(0, 4) ? DATE_FMT : DATE_YEAR_FMT).format(value);
+}
+
+const fold = (value: string) => value.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+
+function initialsOf(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
+
+/** A plain chat, no pre-filled message: this is not a booking confirmation. */
+function chatLink(phone: string): string {
+  return `https://api.whatsapp.com/send?phone=${waDigits(phone)}`;
+}
+
+/**
+ * Everyone who has booked, one dense row each: who, how to reach them, when
+ * they last came and when they come next. Search takes names, services and
+ * phone numbers in the way people say them ("0612", accents optional); a row
+ * opens the client's history.
+ */
+export function ClientsList({ initialClients, today }: Props) {
   const [search, setSearch] = useState("");
-  const [selectedSalon, setSelectedSalon] = useState<FilterSalon>("all");
-  const [minBookingsFilter, setMinBookingsFilter] = useState<"all" | "frequent">("all");
-  const [sortBy, setSortBy] = useState<SortBy>("bookings");
-  const [activeClientHistory, setActiveClientHistory] = useState<ClientSummary | null>(null);
+  const [salon, setSalon] = useState("all");
+  const [loyalty, setLoyalty] = useState<Loyalty>("all");
+  const [sortBy, setSortBy] = useState<SortBy>("recent");
+  const [limit, setLimit] = useState(PAGE);
+  const [openClient, setOpenClient] = useState<ClientSummary | null>(null);
 
-  // Extract list of all unique salons
   const allSalons = useMemo(() => {
     const set = new Set<string>();
-    for (const c of initialClients) {
-      for (const s of c.salonsVisited) set.add(s);
-    }
-    return Array.from(set);
+    for (const c of initialClients) for (const s of c.salonsVisited) set.add(s);
+    return Array.from(set).sort();
   }, [initialClients]);
 
-  // Filter and sort clients
-  const filteredClients = useMemo(() => {
-    const q = search.trim().toLowerCase();
+  const stats = useMemo(() => {
+    let frequent = 0;
+    let upcoming = 0;
+    for (const c of initialClients) {
+      if (c.totalBookings >= 2) frequent += 1;
+      if (c.nextBooking) upcoming += 1;
+    }
+    return { total: initialClients.length, frequent, upcoming };
+  }, [initialClients]);
 
+  const filtered = useMemo(() => {
+    const text = fold(search.trim());
+    const digits = search.replace(/\D/g, "");
     return initialClients
       .filter((c) => {
-        // Search filter
-        if (q) {
-          const matchName = c.clientName.toLowerCase().includes(q);
-          const matchPhone = c.clientPhone.includes(q) || c.formattedPhone.includes(q);
-          const matchService = c.lastService.toLowerCase().includes(q);
-          if (!matchName && !matchPhone && !matchService) return false;
+        if (text) {
+          const phoneDigits = c.clientPhone.replace(/\D/g, "");
+          const national = phoneDigits.startsWith("212") ? `0${phoneDigits.slice(3)}` : phoneDigits;
+          const byText = fold(c.clientName).includes(text) || fold(c.lastService).includes(text);
+          const byPhone = digits.length >= 2 && (phoneDigits.includes(digits) || national.includes(digits));
+          if (!byText && !byPhone) return false;
         }
-
-        // Salon filter
-        if (selectedSalon !== "all" && !c.salonsVisited.includes(selectedSalon)) {
-          return false;
-        }
-
-        // Min bookings filter (Frequent >= 2 bookings)
-        if (minBookingsFilter === "frequent" && c.totalBookings < 2) {
-          return false;
-        }
-
+        if (salon !== "all" && !c.salonsVisited.includes(salon)) return false;
+        if (loyalty === "frequent" && c.totalBookings < 2) return false;
+        if (loyalty === "upcoming" && !c.nextBooking) return false;
         return true;
       })
       .sort((a, b) => {
@@ -76,462 +106,413 @@ export function ClientsList({ initialClients }: Props) {
         if (sortBy === "recent") {
           return b.lastBookingDate.localeCompare(a.lastBookingDate) || b.totalBookings - a.totalBookings;
         }
-        if (sortBy === "name") {
-          return a.clientName.localeCompare(b.clientName);
-        }
-        return 0;
+        return a.clientName.localeCompare(b.clientName, "fr");
       });
-  }, [initialClients, search, selectedSalon, minBookingsFilter, sortBy]);
+  }, [initialClients, search, salon, loyalty, sortBy]);
 
-  // Overall statistics
-  const stats = useMemo(() => {
-    const totalClients = initialClients.length;
-    const totalBookingsCount = initialClients.reduce((acc, c) => acc + c.totalBookings, 0);
-    const frequentCount = initialClients.filter((c) => c.totalBookings >= 2).length;
-    return { totalClients, totalBookingsCount, frequentCount };
-  }, [initialClients]);
+  const shown = filtered.slice(0, limit);
+  const resetPaging = () => setLimit(PAGE);
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 md:gap-4">
-        <div
-          className="card flex flex-col justify-between p-4"
-          style={{ background: "var(--surface)" }}
-        >
-          <span className="t-small" style={{ color: "var(--ink-faint)" }}>
-            Clients uniques
+    <div className="flex flex-col gap-4">
+      {/* Toolbar: search first, it is what this page is for. */}
+      <div className="flex flex-col gap-3 md:flex-row md:items-center">
+        <label className="search-field w-full md:max-w-[420px]">
+          <span className="shrink-0" style={{ color: "var(--ink-faint)" }}>
+            <Search size={16} />
           </span>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="t-display text-[26px]" style={{ color: "var(--ink)" }} data-nums>
-              {stats.totalClients}
-            </span>
-            <span className="t-micro rounded-full px-2 py-0.5" style={{ background: "var(--surface-sunk)", color: "var(--ink-soft)" }}>
-              Répertoire
-            </span>
-          </div>
-        </div>
-
-        <div
-          className="card flex flex-col justify-between p-4"
-          style={{ background: "var(--surface)" }}
-        >
-          <span className="t-small" style={{ color: "var(--ink-faint)" }}>
-            Clients fidèles (≥ 2 visites)
-          </span>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="t-display text-[26px]" style={{ color: "var(--accent)" }} data-nums>
-              {stats.frequentCount}
-            </span>
-            <span className="t-micro rounded-full px-2 py-0.5" style={{ background: "var(--accent-tint)", color: "var(--accent-hover)" }}>
-              {stats.totalClients > 0 ? `${Math.round((stats.frequentCount / stats.totalClients) * 100)}%` : "0%"}
-            </span>
-          </div>
-        </div>
-
-        <div
-          className="card flex flex-col justify-between p-4"
-          style={{ background: "var(--surface)" }}
-        >
-          <span className="t-small" style={{ color: "var(--ink-faint)" }}>
-            Total réservations enregistrées
-          </span>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="t-display text-[26px]" style={{ color: "var(--ink)" }} data-nums>
-              {stats.totalBookingsCount}
-            </span>
-            <span className="t-micro rounded-full px-2 py-0.5" style={{ background: "var(--surface-sunk)", color: "var(--ink-soft)" }}>
-              Cumul
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Filter and Search Bar */}
-      <div className="card flex flex-col gap-3 p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          {/* Search */}
-          <div className="relative flex-1">
-            <span
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2"
-              style={{ color: "var(--ink-faint)" }}
+          <input
+            type="search"
+            placeholder="Nom, téléphone ou service"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              resetPaging();
+            }}
+            aria-label="Rechercher un client"
+            autoComplete="off"
+          />
+          {search ? (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px]"
+              style={{ color: "var(--ink-soft)" }}
+              aria-label="Effacer la recherche"
             >
-              <Search size={16} />
-            </span>
-            <input
-              type="search"
-              placeholder="Rechercher par nom, téléphone, prestation…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="input pl-9"
-              style={{ width: "100%" }}
-            />
-            {search && (
-              <button
-                type="button"
-                onClick={() => setSearch("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1"
-                style={{ color: "var(--ink-faint)" }}
-                aria-label="Effacer la recherche"
-              >
-                <Close size={14} />
-              </button>
-            )}
-          </div>
+              <Close size={14} />
+            </button>
+          ) : null}
+        </label>
 
-          {/* Sort selection */}
-          <div className="flex items-center gap-2 min-w-[220px]">
-            <span className="t-small shrink-0" style={{ color: "var(--ink-faint)" }}>
-              Trier par :
-            </span>
-            <div className="flex-1">
-              <SelectDropdown<SortBy>
-                value={sortBy}
-                onChange={setSortBy}
+        <div className="flex items-center gap-2 md:ml-auto">
+          {allSalons.length > 1 ? (
+            <div className="min-w-0 flex-1 md:w-[180px] md:flex-none">
+              <SelectDropdown<string>
+                value={salon}
+                onChange={(value) => {
+                  setSalon(value);
+                  resetPaging();
+                }}
                 options={[
-                  { value: "bookings", label: "Plus de visites (Fidélité)" },
-                  { value: "recent", label: "Dernière visite" },
-                  { value: "name", label: "Nom (A — Z)" },
+                  { value: "all", label: "Tous les salons" },
+                  ...allSalons.map((s) => ({ value: s, label: s })),
                 ]}
               />
             </div>
+          ) : null}
+          <div className="min-w-0 flex-1 md:w-[200px] md:flex-none">
+            <SelectDropdown<SortBy>
+              value={sortBy}
+              onChange={setSortBy}
+              options={[
+                { value: "recent", label: "Récents" },
+                { value: "bookings", label: "Plus de rdv" },
+                { value: "name", label: "De A à Z" },
+              ]}
+            />
           </div>
-        </div>
-
-        {/* Filter Pills */}
-        <div className="flex flex-wrap items-center gap-2 border-t pt-3" style={{ borderColor: "var(--line)" }}>
-          <span className="t-micro uppercase tracking-wider" style={{ color: "var(--ink-faint)" }}>
-            Filtres :
-          </span>
-
-          <button
-            type="button"
-            onClick={() => setMinBookingsFilter("all")}
-            className="t-small rounded-full px-3 py-1 text-[12px] transition-colors"
-            style={{
-              background: minBookingsFilter === "all" ? "var(--ink)" : "var(--surface-sunk)",
-              color: minBookingsFilter === "all" ? "var(--surface)" : "var(--ink-soft)",
-            }}
-          >
-            Tous les clients
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setMinBookingsFilter("frequent")}
-            className="t-small rounded-full px-3 py-1 text-[12px] transition-colors"
-            style={{
-              background: minBookingsFilter === "frequent" ? "var(--accent)" : "var(--surface-sunk)",
-              color: minBookingsFilter === "frequent" ? "#ffffff" : "var(--ink-soft)",
-            }}
-          >
-            ⭐ Clients réguliers (≥ 2)
-          </button>
-
-          {allSalons.length > 1 && (
-            <div className="ml-auto flex items-center gap-2">
-              <span className="t-small text-[12px] shrink-0" style={{ color: "var(--ink-faint)" }}>
-                Salon :
-              </span>
-              <div className="w-[180px]">
-                <SelectDropdown<FilterSalon>
-                  value={selectedSalon}
-                  onChange={setSelectedSalon}
-                  options={[
-                    { value: "all", label: "Tous les salons" },
-                    ...allSalons.map((s) => ({ value: s, label: s })),
-                  ]}
-                />
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
-      {/* Clients Grid / Table */}
-      {filteredClients.length === 0 ? (
-        <div className="card flex flex-col items-center justify-center p-12 text-center">
-          <div
-            className="flex h-12 w-12 items-center justify-center rounded-full mb-3"
-            style={{ background: "var(--surface-sunk)", color: "var(--ink-faint)" }}
+      <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 md:mx-0 md:px-0" role="radiogroup" aria-label="Filtrer les clients">
+        {(
+          [
+            ["all", "Tous", stats.total],
+            ["upcoming", "Rendez-vous à venir", stats.upcoming],
+            ["frequent", "Fidèles", stats.frequent],
+          ] as const
+        ).map(([value, label, count]) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={loyalty === value}
+            onClick={() => {
+              setLoyalty(value);
+              resetPaging();
+            }}
+            className="filter-chip"
           >
-            <User size={24} />
-          </div>
-          <p className="t-title text-[16px]">Aucun client trouvé</p>
+            {label}
+            <span data-nums>{count}</span>
+          </button>
+        ))}
+      </div>
+
+      <p className="t-small" style={{ color: "var(--ink-faint)" }} aria-live="polite" data-nums>
+        {filtered.length === initialClients.length
+          ? `${filtered.length} clients`
+          : `${filtered.length} sur ${initialClients.length} clients`}
+      </p>
+
+      {filtered.length === 0 ? (
+        <div className="card flex flex-col items-center px-6 py-12 text-center">
+          <p className="t-heading">Aucun client trouvé</p>
           <p className="t-small mt-1" style={{ color: "var(--ink-faint)" }}>
-            Modifiez votre recherche ou vos filtres pour voir les résultats.
+            {initialClients.length === 0
+              ? "Les clients apparaissent ici dès leur premier rendez-vous."
+              : "Essayez un autre nom, un numéro ou retirez un filtre."}
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {filteredClients.map((client) => {
-            const waLink = buildWhatsAppLink({
-              clientName: client.clientName,
-              clientPhone: client.clientPhone,
-              salonName: "L'Atelier",
-              bookingDate: client.lastBookingDate,
-              startMin: 0,
-              service: client.lastService,
-            });
-
-            const initials = client.clientName
-              .split(" ")
-              .filter(Boolean)
-              .map((n) => n[0])
-              .slice(0, 2)
-              .join("")
-              .toUpperCase();
-
-            return (
-              <div
-                key={`${client.clientPhone}-${client.clientName}`}
-                className="card group flex flex-col justify-between p-4 transition-all duration-150 hover:shadow-md"
-                style={{ background: "var(--surface)" }}
-              >
-                {/* Header info */}
-                <div>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-3">
-                      <div
-                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full font-semibold text-[14px]"
-                        style={{
-                          background: "var(--accent-tint)",
-                          color: "var(--accent-hover)",
-                          border: "1px solid color-mix(in srgb, var(--accent) 30%, transparent)",
-                        }}
-                      >
-                        {initials || <User size={18} />}
-                      </div>
-
-                      <div className="min-w-0">
-                        <h3 className="truncate text-[15px] font-semibold" style={{ color: "var(--ink)" }}>
-                          {client.clientName}
-                        </h3>
-                        <p className="t-small truncate text-[12px]" style={{ color: "var(--ink-soft)" }} data-nums>
-                          {client.formattedPhone}
-                        </p>
-                      </div>
-                    </div>
-
-                    <span
-                      className="t-small shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
-                      style={{
-                        background: client.totalBookings > 2 ? "var(--accent)" : "var(--surface-sunk)",
-                        color: client.totalBookings > 2 ? "#ffffff" : "var(--ink-soft)",
-                      }}
-                      data-nums
-                    >
-                      {client.totalBookings} rdv
-                    </span>
-                  </div>
-
-                  {/* Visit Stats */}
-                  <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11.5px]" style={{ color: "var(--ink-faint)" }}>
-                    {client.doneBookings > 0 && (
-                      <span className="inline-flex items-center gap-1 rounded-[6px] px-1.5 py-0.5" style={{ background: "var(--surface-sunk)" }}>
-                        <Check size={11} className="text-emerald-600" />
-                        <span>{client.doneBookings} effectué{client.doneBookings > 1 ? "s" : ""}</span>
-                      </span>
-                    )}
-                    {client.confirmedBookings > 0 && (
-                      <span className="inline-flex items-center gap-1 rounded-[6px] px-1.5 py-0.5" style={{ background: "var(--surface-sunk)" }}>
-                        <Clock size={11} className="text-amber-600" />
-                        <span>{client.confirmedBookings} à venir</span>
-                      </span>
-                    )}
-                    {client.cancelledBookings > 0 && (
-                      <span className="inline-flex items-center gap-1 rounded-[6px] px-1.5 py-0.5" style={{ background: "var(--surface-sunk)" }}>
-                        <Close size={11} className="text-rose-500" />
-                        <span>{client.cancelledBookings} annulé{client.cancelledBookings > 1 ? "s" : ""}</span>
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Last visit & service */}
-                  <div className="mt-3 border-t pt-2.5 text-[12px]" style={{ borderColor: "var(--line)" }}>
-                    <div className="flex items-center justify-between text-[11.5px]">
-                      <span style={{ color: "var(--ink-faint)" }}>Dernière prestation :</span>
-                      <span className="font-medium truncate max-w-[160px]" style={{ color: "var(--ink)" }}>
-                        {client.lastService || "—"}
-                      </span>
-                    </div>
-
-                    <div className="mt-1 flex items-center justify-between text-[11.5px]">
-                      <span style={{ color: "var(--ink-faint)" }}>Dernier passage :</span>
-                      <span style={{ color: "var(--ink-soft)" }} data-nums>
-                        {formatLongDate(client.lastBookingDate)}
-                      </span>
-                    </div>
-
-                    {client.salonsVisited.length > 0 && (
-                      <div className="mt-1.5 flex flex-wrap gap-1">
-                        {client.salonsVisited.map((salonName) => (
-                          <span
-                            key={salonName}
-                            className="t-micro rounded px-1.5 py-0.5 text-[10px]"
-                            style={{ background: "var(--surface-sunk)", color: "var(--ink-faint)" }}
-                          >
-                            {salonName}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Card Actions */}
-                <div className="mt-4 flex items-center gap-2 border-t pt-3" style={{ borderColor: "var(--line)" }}>
-                  {client.clientPhone && (
-                    <a
-                      href={waLink}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn-secondary btn-sm flex-1 justify-center gap-1 text-[12px]"
-                      title="Contacter sur WhatsApp"
-                    >
-                      <WhatsApp size={13} className="text-emerald-600" />
-                      WhatsApp
-                    </a>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => setActiveClientHistory(client)}
-                    className="btn-secondary btn-sm flex-1 justify-center gap-1 text-[12px]"
-                  >
-                    <Calendar size={13} />
-                    Historique
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* History Detail Drawer / Modal */}
-      {activeClientHistory && (
-        <div
-          className="anim-fade fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: "rgba(0, 0, 0, 0.45)", backdropFilter: "blur(4px)" }}
-          onClick={() => setActiveClientHistory(null)}
-        >
+        <div className="card overflow-hidden p-0">
           <div
-            className="card relative flex max-h-[85vh] w-full max-w-[540px] flex-col overflow-hidden p-5 shadow-2xl animate-in zoom-in-95 duration-150"
-            style={{ background: "var(--surface)" }}
-            onClick={(e) => e.stopPropagation()}
+            className="hidden border-b px-4 py-2.5 text-[12px] font-semibold lg:grid lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1.3fr)_120px_150px_70px_96px] lg:gap-4"
+            style={{ borderColor: "var(--line)", color: "var(--ink-soft)", background: "var(--surface-hover)" }}
           >
-            {/* Modal Header */}
-            <div className="flex items-start justify-between border-b pb-4" style={{ borderColor: "var(--line)" }}>
-              <div>
-                <span className="t-micro uppercase tracking-wider" style={{ color: "var(--accent)" }}>
-                  Fiche Client
-                </span>
-                <h2 className="t-display text-[20px] mt-0.5" style={{ color: "var(--ink)" }}>
-                  {activeClientHistory.clientName}
-                </h2>
-                <p className="t-small mt-0.5" style={{ color: "var(--ink-soft)" }} data-nums>
-                  {activeClientHistory.formattedPhone} • {activeClientHistory.totalBookings} réservation{activeClientHistory.totalBookings > 1 ? "s" : ""}
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setActiveClientHistory(null)}
-                className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-[color:var(--surface-sunk)]"
-                style={{ color: "var(--ink-soft)" }}
-                aria-label="Fermer"
-              >
-                <Close size={18} />
-              </button>
-            </div>
-
-            {/* Modal Body: Bookings timeline */}
-            <div className="mt-4 flex-1 overflow-y-auto pr-1">
-              <h4 className="text-[13px] font-semibold mb-3" style={{ color: "var(--ink)" }}>
-                Historique des rendez-vous
-              </h4>
-
-              <div className="flex flex-col gap-2.5">
-                {activeClientHistory.recentBookings.map((b) => {
-                  const isDone = b.status === "done";
-                  const isCancelled = b.status === "cancelled";
-
-                  return (
-                    <div
-                      key={b.id}
-                      className="flex items-center justify-between rounded-[10px] border p-3"
-                      style={{
-                        background: "var(--surface-sunk)",
-                        borderColor: "var(--line)",
-                        opacity: isCancelled ? 0.6 : 1,
-                      }}
-                    >
-                      <div className="flex flex-col">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[13px] font-semibold" style={{ color: "var(--ink)" }}>
-                            {b.service}
-                          </span>
-                          <span
-                            className="t-micro rounded px-1.5 py-0.2"
-                            style={{
-                              background: isDone
-                                ? "rgba(16, 185, 129, 0.15)"
-                                : isCancelled
-                                ? "rgba(244, 63, 94, 0.15)"
-                                : "var(--accent-tint)",
-                              color: isDone
-                                ? "#059669"
-                                : isCancelled
-                                ? "#e11d48"
-                                : "var(--accent-hover)",
-                            }}
-                          >
-                            {isDone ? "Terminé" : isCancelled ? "Annulé" : "Confirmé"}
-                          </span>
-                        </div>
-
-                        <span className="t-small mt-0.5 text-[11.5px]" style={{ color: "var(--ink-faint)" }}>
-                          {b.salonName} • {b.durationMin} min
-                        </span>
-                      </div>
-
-                      <div className="text-right" data-nums>
-                        <span className="block text-[12px] font-semibold" style={{ color: "var(--ink)" }}>
-                          {formatLongDate(b.bookingDate)}
-                        </span>
-                        <span className="t-small text-[11px]" style={{ color: "var(--ink-soft)" }}>
-                          {minutesToLabel(b.startMin)}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="mt-5 flex items-center justify-between border-t pt-3" style={{ borderColor: "var(--line)" }}>
-              <Link
-                href={`/bookings?salon=${activeClientHistory.recentBookings[0]?.salonSlug || "vip"}`}
-                className="btn-primary btn-sm flex items-center gap-1.5"
-                onClick={() => setActiveClientHistory(null)}
-              >
-                <Plus size={15} />
-                Nouvelle réservation
-              </Link>
-
-              <button
-                type="button"
-                onClick={() => setActiveClientHistory(null)}
-                className="btn-secondary btn-sm"
-              >
-                Fermer
-              </button>
-            </div>
+            <span>Client</span>
+            <span>Dernière prestation</span>
+            <span>Dernière visite</span>
+            <span>Prochain rendez-vous</span>
+            <span className="text-right">Total</span>
+            <span />
           </div>
+          <ul>
+            {shown.map((client) => (
+              <ClientRow
+                key={`${client.clientPhone}-${client.clientName}`}
+                client={client}
+                today={today}
+                onOpen={() => setOpenClient(client)}
+              />
+            ))}
+          </ul>
         </div>
       )}
+
+      {filtered.length > shown.length ? (
+        <button type="button" className="btn-secondary self-center" onClick={() => setLimit((n) => n + PAGE)}>
+          Afficher {Math.min(PAGE, filtered.length - shown.length)} clients de plus
+          <span style={{ color: "var(--ink-faint)" }} data-nums>
+            ({shown.length} sur {filtered.length})
+          </span>
+        </button>
+      ) : null}
+
+      {openClient ? (
+        <ClientSheet client={openClient} today={today} onClose={() => setOpenClient(null)} />
+      ) : null}
+    </div>
+  );
+}
+
+function ClientRow({
+  client,
+  today,
+  onOpen,
+}: {
+  client: ClientSummary;
+  today: string;
+  onOpen: () => void;
+}) {
+  const next = client.nextBooking;
+  return (
+    <li className="client-row">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 pr-2 text-left lg:grid lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1.3fr)_120px_150px_70px] lg:gap-4"
+        aria-label={`${client.clientName}, ${client.totalBookings} rendez-vous. Ouvrir l'historique`}
+      >
+        <span className="flex min-w-0 items-center gap-3">
+          <span className="avatar" aria-hidden>
+            {initialsOf(client.clientName)}
+          </span>
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate text-[14.5px] font-semibold" style={{ color: "var(--ink)" }}>
+              {client.clientName}
+            </span>
+            <span className="truncate text-[13px]" style={{ color: "var(--ink-soft)" }} data-nums>
+              {client.formattedPhone}
+            </span>
+            {/* Narrower screens fold the date columns into one line. */}
+            {next || client.lastVisitDate ? (
+              <span className="truncate text-[12.5px] lg:hidden" data-nums>
+                {next ? (
+                  <span className="font-semibold" style={{ color: "var(--accent-ink)" }}>
+                    Prochain {shortDate(next.bookingDate, today)} à {minutesToLabel(next.startMin)}
+                  </span>
+                ) : (
+                  <span style={{ color: "var(--ink-faint)" }}>
+                    Venu le {shortDate(client.lastVisitDate ?? today, today)}
+                  </span>
+                )}
+              </span>
+            ) : null}
+          </span>
+        </span>
+
+        <span className="hidden truncate text-[13.5px] lg:block" style={{ color: "var(--ink-soft)" }}>
+          {client.lastService || "Aucune"}
+        </span>
+        <span className="hidden text-[13.5px] lg:block" style={{ color: "var(--ink-soft)" }} data-nums>
+          {client.lastVisitDate ? shortDate(client.lastVisitDate, today) : "Jamais venu"}
+        </span>
+        <span className="hidden text-[13.5px] lg:block" data-nums>
+          {next ? (
+            <span className="font-semibold" style={{ color: "var(--accent-ink)" }}>
+              {shortDate(next.bookingDate, today)} · {minutesToLabel(next.startMin)}
+            </span>
+          ) : (
+            <span style={{ color: "var(--ink-faint)" }}>Aucun</span>
+          )}
+        </span>
+        <span className="ml-auto shrink-0 text-right lg:ml-0">
+          <span className={client.totalBookings >= 2 ? "chip chip-accent" : "chip"} data-nums>
+            {client.totalBookings} rdv
+          </span>
+        </span>
+      </button>
+
+      <span className="flex shrink-0 items-center pr-2 lg:w-[96px] lg:justify-end lg:gap-1">
+        {client.clientPhone ? (
+          <a
+            href={chatLink(client.clientPhone)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn-icon"
+            style={{ color: "var(--whatsapp)" }}
+            aria-label={`Écrire à ${client.clientName} sur WhatsApp`}
+            title="Écrire sur WhatsApp"
+          >
+            <WhatsApp size={20} />
+          </a>
+        ) : null}
+        <span className="hidden lg:inline-flex" style={{ color: "var(--ink-faint)" }} aria-hidden>
+          <ChevronRight size={18} />
+        </span>
+      </span>
+    </li>
+  );
+}
+
+const STATUS_WORDS = {
+  done: "Terminé",
+  cancelled: "Annulé",
+  confirmed: "Confirmé",
+} as const;
+
+function ClientSheet({
+  client,
+  today,
+  onClose,
+}: {
+  client: ClientSummary;
+  today: string;
+  onClose: () => void;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const onKeyDown = useEffectEvent((e: KeyboardEvent) => {
+    if (e.key === "Escape") onClose();
+  });
+
+  useEffect(() => {
+    const returnFocusTo = document.activeElement as HTMLElement | null;
+    panelRef.current?.focus();
+    const listener = (e: KeyboardEvent) => onKeyDown(e);
+    document.addEventListener("keydown", listener);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", listener);
+      document.body.style.overflow = previousOverflow;
+      returnFocusTo?.focus?.();
+    };
+  }, []);
+
+  const salonSlug = client.nextBooking
+    ? client.recentBookings.find((b) => b.bookingDate === client.nextBooking?.bookingDate)?.salonSlug
+    : client.recentBookings[0]?.salonSlug;
+
+  return (
+    <div
+      className="sheet-backdrop anim-fade md:items-center md:p-4"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="client-title"
+        tabIndex={-1}
+        className="anim-sheet flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-[20px] outline-none md:max-w-[560px] md:rounded-[20px]"
+        style={{ background: "var(--surface)", boxShadow: "var(--shadow-sheet)" }}
+      >
+        <div className="flex justify-center pt-2 md:hidden" aria-hidden>
+          <span className="block h-1 w-9 rounded-full" style={{ background: "var(--line-strong)" }} />
+        </div>
+
+        <div className="flex items-start gap-3 border-b px-5 pb-4 pt-3 md:pt-5" style={{ borderColor: "var(--line)" }}>
+          <span className="avatar avatar-lg" aria-hidden>
+            {initialsOf(client.clientName)}
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 id="client-title" className="t-title truncate">
+              {client.clientName}
+            </h2>
+            <p className="t-small" style={{ color: "var(--ink-soft)" }} data-nums>
+              {client.formattedPhone}
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="btn-icon -mr-2 -mt-1" aria-label="Fermer">
+            <Close size={20} />
+          </button>
+        </div>
+
+        <dl className="grid grid-cols-3 gap-2 px-5 pt-4 text-center">
+          {(
+            [
+              ["Rendez-vous", client.totalBookings],
+              ["Terminés", client.doneBookings],
+              ["Annulés", client.cancelledBookings],
+            ] as const
+          ).map(([label, value]) => (
+            <div key={label} className="flex flex-col-reverse rounded-[10px] py-2.5" style={{ background: "var(--surface-sunk)" }}>
+              <dt className="text-[12px]" style={{ color: "var(--ink-soft)" }}>
+                {label}
+              </dt>
+              <dd className="text-[18px] font-semibold leading-6" data-nums>
+                {value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">
+          <h3 className="mb-2 text-[13px] font-semibold" style={{ color: "var(--ink)" }}>
+            Derniers rendez-vous
+          </h3>
+          <ol className="flex flex-col gap-1.5">
+            {client.recentBookings.map((b) => (
+              <li
+                key={b.id}
+                className="flex items-center gap-3 rounded-[10px] border px-3 py-2.5"
+                style={{
+                  borderColor: "var(--line)",
+                  background: b.status === "cancelled" ? "var(--surface-sunk)" : "var(--surface)",
+                }}
+              >
+                <span className="w-[74px] shrink-0" data-nums>
+                  <span className="block text-[13px] font-semibold">{shortDate(b.bookingDate, today)}</span>
+                  <span className="block text-[12px]" style={{ color: "var(--ink-faint)" }}>
+                    {minutesToLabel(b.startMin)}
+                  </span>
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span
+                    className="block truncate text-[13.5px] font-medium"
+                    style={{
+                      color: b.status === "cancelled" ? "var(--ink-faint)" : "var(--ink)",
+                      textDecoration: b.status === "cancelled" ? "line-through" : undefined,
+                    }}
+                  >
+                    {b.service}
+                  </span>
+                  <span className="block truncate text-[12px]" style={{ color: "var(--ink-faint)" }} data-nums>
+                    {b.salonName} · {formatDuration(b.durationMin)}
+                  </span>
+                </span>
+                <span
+                  className={b.status === "done" ? "chip chip-success" : b.status === "confirmed" && b.bookingDate >= today ? "chip chip-accent" : "chip"}
+                >
+                  {b.status === "done" ? <Check size={12} /> : null}
+                  {b.status === "confirmed" && b.bookingDate < today ? "Passé" : STATUS_WORDS[b.status]}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </div>
+
+        <div
+          className="flex gap-2 border-t px-5 pt-3"
+          style={{ borderColor: "var(--line)", paddingBottom: "max(16px, env(safe-area-inset-bottom))" }}
+        >
+          {client.clientPhone ? (
+            <a
+              href={chatLink(client.clientPhone)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-secondary flex-1"
+            >
+              <span style={{ color: "var(--whatsapp)" }}>
+                <WhatsApp size={18} />
+              </span>
+              WhatsApp
+            </a>
+          ) : null}
+          <Link
+            href={`/bookings?salon=${salonSlug ?? "vip"}&date=${client.nextBooking?.bookingDate ?? today}`}
+            className="btn-primary flex-1"
+            onClick={onClose}
+          >
+            {client.nextBooking ? <ArrowUpRight size={18} /> : <Plus size={18} />}
+            {client.nextBooking ? "Voir au planning" : "Réserver"}
+          </Link>
+        </div>
+      </div>
     </div>
   );
 }

@@ -190,11 +190,26 @@ export function getServicesForSalon(slug: string): ServiceCatalogEntry[] {
   return CATALOG_BY_SLUG[slug] ?? FALLBACK;
 }
 
+/** The catalogue entry a booked service refers to, however it was capitalised or spaced. */
+export function findCatalogEntry(
+  catalog: readonly ServiceCatalogEntry[],
+  service: string,
+): ServiceCatalogEntry | undefined {
+  const key = service.trim().toLowerCase();
+  return catalog.find((entry) => entry.name.trim().toLowerCase() === key);
+}
+
 /** Grouped in category order, for an `<optgroup>`-rendered `<select>`. */
 export function groupedServicesForSalon(
   slug: string,
 ): { category: string; items: ServiceCatalogEntry[] }[] {
-  const entries = getServicesForSalon(slug);
+  return groupCatalog(getServicesForSalon(slug));
+}
+
+/** Any catalogue — static or the owner's live one — grouped in first-seen category order. */
+export function groupCatalog(
+  entries: readonly ServiceCatalogEntry[],
+): { category: string; items: ServiceCatalogEntry[] }[] {
   const order: string[] = [];
   const byCategory = new Map<string, ServiceCatalogEntry[]>();
   for (const entry of entries) {

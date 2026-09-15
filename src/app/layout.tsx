@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Atelier Planning",
-  description: "Gestion des réservations — L'Atelier Groupe",
+  description: "Gestion des réservations de L'Atelier Groupe",
   robots: { index: false, follow: false },
   icons: {
     icon: [
@@ -19,11 +19,12 @@ export const viewport: Viewport = {
   initialScale: 1,
   // Staff must be able to zoom a phone screen in a bright salon.
   maximumScale: 5,
-  // One fixed dark theme now (see globals.css) — both entries point at the
-  // same colour so the browser chrome matches regardless of OS setting.
+  // One fixed light theme (see globals.css). Both entries use the page's own
+  // ground so a phone's browser chrome continues the app instead of
+  // framing it in a colour from an older theme.
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#0d1220" },
-    { media: "(prefers-color-scheme: dark)", color: "#0d1220" },
+    { media: "(prefers-color-scheme: light)", color: "#F7F4EF" },
+    { media: "(prefers-color-scheme: dark)", color: "#F7F4EF" },
   ],
 };
 

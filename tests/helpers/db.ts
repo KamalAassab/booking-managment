@@ -21,6 +21,16 @@ export const describeIfDb = hasTestDatabase ? describe : describe.skip;
 
 /** Empties the tables. Bookings first: they reference salons. */
 export async function truncateAll(): Promise<void> {
+  // tests/setup.ts also loads .env.local, whose DATABASE_URL is a real
+  // database. Wiping it because a suite forgot its describeIfDb guard would
+  // be unrecoverable, so truncation refuses to run anywhere but the test DB.
+  const url = process.env.DATABASE_URL;
+  if (
+    !process.env.TEST_DATABASE_URL ||
+    (url !== process.env.TEST_DATABASE_URL && url !== process.env.NEON_HTTP_EMULATED_URL)
+  ) {
+    throw new Error("truncateAll() refused: DATABASE_URL is not the test database.");
+  }
   await db.execute(
     sql`TRUNCATE TABLE ${bookings}, ${salons}, ${users} RESTART IDENTITY CASCADE`,
   );

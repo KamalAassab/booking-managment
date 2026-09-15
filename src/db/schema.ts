@@ -84,10 +84,11 @@ export const salons = pgTable(
  * Overlap prevention is enforced in the database, not in application code, so
  * two devices sharing the same account cannot both win the same slot (brief
  * §3, "zero-delay double-booking prevention"). The constraint itself is a
- * GiST exclusion constraint added in the migration — Drizzle cannot express
- * `EXCLUDE USING gist` yet, so see drizzle/0001_no_overlap.sql. It rejects any
- * two non-cancelled bookings in the same salon, on the same day, whose
- * [start, start + duration) minute ranges intersect.
+ * GiST exclusion constraint added in the migrations — Drizzle cannot express
+ * `EXCLUDE USING gist` yet, so see drizzle/0005_service_case_insensitive.sql.
+ * It rejects any two non-cancelled bookings in the same salon, on the same
+ * day, for the same service (compared ignoring case and surrounding spaces),
+ * whose [start, start + duration) minute ranges intersect.
  */
 export const bookings = pgTable(
   "bookings",
@@ -125,7 +126,7 @@ export const bookings = pgTable(
     // as a cheap second line of defence and a clearer error for the common
     // "two agents picked the same slot" collision.
     uniqueIndex("bookings_slot_unique")
-      .on(t.salonId, t.bookingDate, t.service, t.startMin)
+      .on(t.salonId, t.bookingDate, sql`lower(btrim(${t.service}))`, t.startMin)
       .where(sql`status <> 'cancelled'`),
     check("bookings_start_min_range", sql`${t.startMin} BETWEEN 0 AND 1439`),
     check("bookings_duration_positive", sql`${t.durationMin} > 0`),

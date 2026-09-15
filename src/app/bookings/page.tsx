@@ -5,6 +5,8 @@ import { SetupNotice } from "@/components/setup-notice";
 import { requireSession } from "@/lib/auth";
 import { getSalonBySlug, listBookings, listSalons } from "@/lib/bookings";
 import { setupNoticeFor } from "@/lib/page-errors";
+import { catalogsForSalons } from "@/lib/services";
+import { getServicesForSalon } from "@/lib/services-catalog";
 import { isValidDateString, todayInSalonTz } from "@/lib/time";
 import { toBookingDTO, toSalonDTO } from "@/lib/types";
 import type { Salon } from "@/db/schema";
@@ -59,12 +61,20 @@ export default async function BookingsPage({
 
   const bookings = await listBookings(salon.id, date);
 
+  // The owner's live catalogue. A database migrated before the services
+  // table existed must still take bookings, so failing to read it means the
+  // static catalogue rather than an error page.
+  const catalogs = await catalogsForSalons(salons).catch(() =>
+    Object.fromEntries(salons.map((s) => [s.slug, getServicesForSalon(s.slug)])),
+  );
+
   return (
     <BookingsBoard
       salons={salons.map(toSalonDTO)}
       salon={toSalonDTO(salon)}
       date={date}
       initialBookings={bookings.map(toBookingDTO)}
+      catalogs={catalogs}
       role={session.role}
     />
   );

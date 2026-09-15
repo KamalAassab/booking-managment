@@ -55,8 +55,10 @@ DATABASE_URL='postgres://postgres@127.0.0.1:5432/atelier' npm run db:migrate
 | Route | Who | What |
 |---|---|---|
 | `/login` | everyone | Role toggle (Personnel / Propriétaire) + password. No username field — there is one shared staff account. |
-| `/bookings` | staff + owner | The day's grid for one salon. Click a free slot to book, click a booking to edit, cancel or mark done. |
+| `/bookings` | staff + owner | One salon's day, week or month. Click a free slot to book, click a booking to edit, cancel or mark done. |
+| `/clients` | staff + owner | Every client, grouped by phone number, with their booking history. |
 | `/owner` | owner only | All three salons for a given day, and the two password forms. |
+| `/owner/services` | owner only | Each salon's service catalogue — names, durations, prices. The booking sheet and the WhatsApp message use it. |
 
 ### Device settings (per browser, `localStorage`)
 
@@ -65,9 +67,9 @@ own preferences:
 
 - **Salon** — a front desk reopens on its own salon rather than re-picking it
   every morning.
-- **Poste** — `Réception` or `Centre d'appels`. This is a property of the
-  desk, not of a person: it decides whether submitting a booking opens the
-  pre-filled WhatsApp tab. Nothing about it is attributed to a user.
+- **Poste** — `Réception` or `Appels` (call centre), chosen in the sidebar.
+  This is a property of the desk, not of a person: it is recorded on every
+  booking as its `channel`. Nothing about it is attributed to a user.
 
 ## How the two hard requirements are met
 
@@ -81,27 +83,41 @@ holds no matter how the write arrives:
 ALTER TABLE bookings ADD CONSTRAINT bookings_no_overlap
   EXCLUDE USING gist (
     salon_id WITH =, booking_date WITH =,
+    (lower(btrim(service))) WITH =,
     int4range(start_min, start_min + duration_min) WITH &&
   ) WHERE (status <> 'cancelled');
 ```
 
 An exclusion constraint rather than a plain unique index because bookings have
 durations: a 90-minute coloration at 14:00 has to block 14:30 and 15:00 too.
-A partial unique index on `(salon_id, booking_date, start_min)` sits alongside
-it for the common same-slot collision. Cancelled rows are excluded from both,
-so cancelling frees the slot immediately.
+The rule is per service — different services run side by side, one chair
+each — and a service is compared ignoring case and surrounding spaces, so a
+custom service typed as "Coupe enfant" and "coupe enfant" is still one chair.
+A partial unique index on `(salon_id, booking_date, lower(btrim(service)),
+start_min)` sits alongside it for the common same-slot collision. Cancelled
+rows are excluded from both, so cancelling frees the slot immediately.
 
 The API turns SQLSTATE `23505`/`23P01` into a 409 and the message *"ce créneau
-vient d'être réservé sur un autre poste"*, then refreshes the grid so the
-agent can see who took it. The client also greys out slots it knows are busy —
+vient d'être réservé sur un autre poste"*. The booking sheet stays open with
+everything the agent typed, refreshes the grid so its own conflict warning
+shows who took the slot, and the agent picks another time. The rare deadlock
+between two agents' writes meeting inside the constraint is retried, never
+shown as a server error. The client also greys out slots it knows are busy —
 but that is a courtesy, never the guarantee.
 
 ### The calendar updates live
 
-`/api/bookings/watermark` returns a two-number change token — the newest
-`updated_at` and a row count — for one salon and one day. Each open tab polls
-it every two seconds and refetches the day only when the value moves. A slot
-disappears for everyone within about two seconds of being taken.
+`/api/bookings/watermark` returns a change token for one salon and one day:
+the row count and a digest of every row version (`xmin`) in it. Each visible
+tab polls it every 750 ms and gets the day's bookings back in the same
+response only when the token moves. The week and month views also pass the
+span they show, so a booking made on any visible day reaches them too. A slot
+disappears for everyone within about a second of being taken.
+
+The token is a digest rather than the newest `updated_at`: with several
+agents saving at once, a write routinely commits a few milliseconds after a
+later one a screen has already seen, and a newest-timestamp token never
+notices it — that screen stayed stale until something else changed.
 
 Deliberate choices:
 
@@ -115,22 +131,27 @@ Deliberate choices:
   needs a long-lived direct connection that serverless functions cannot hold.
 - **Polling stops when the tab is hidden.** A browser left open overnight
   would otherwise keep the Neon compute awake.
-- **Failures back off exponentially**, capped at 30 seconds, so a database
+- **Failures back off exponentially**, capped at 10 seconds, so a database
   having a bad minute is not hammered by every open browser at once.
+- **Responses are checked against what is on screen.** Answers arrive in any
+  order; one for the day or salon the agent just left is stored in the cache
+  but never drawn over the day they moved to.
 - **`BroadcastChannel`** updates other tabs in the same browser instantly,
   without waiting for the next poll.
 
 ## WhatsApp confirmations
 
-Only the **call-centre** flow gets this. Front-desk staff already have the
-client's Instagram/WhatsApp thread open — that is how the booking reached
-them — so they reply there by hand.
+When a booking is created from the booking sheet, the app opens a tab to
+WhatsApp's own official click-to-chat link with the confirmation message
+pre-filled — date, time, service, the price from the salon's catalogue (or
+the one typed in the sheet) and any note. Because an agent's browser is a
+linked companion device on the salon's number, it opens straight into the
+compose box and the agent presses Send once.
 
-When an agent submits a booking, the app opens a tab to WhatsApp's own
-official `wa.me` click-to-chat link with the confirmation message pre-filled.
-Because the agent's browser is a linked companion device on the salon's
-number, it opens straight into the compose box and the agent presses Send
-once.
+The tab is pointed at WhatsApp only after the server has accepted the
+booking. A booking refused because another desk took the slot a moment
+earlier closes the blank tab again — a client is never sent a confirmation
+for a booking that does not exist.
 
 The salon's own number — the account the confirmations go out from — is
 **+212 766 092 140**, recorded in `src/lib/salon-contact.ts` and shown on the
@@ -169,6 +190,9 @@ so the step is never silently lost.
   length, so the owner can change hours without a code change.
 - **`bookings`** — salon, client name, phone (E.164), date, start minute,
   duration, service, notes, status, channel.
+- **`services`** — each salon's catalogue, edited from `/owner/services`.
+  Seeded from `src/lib/services-catalog.ts`, which also stands in for a salon
+  that has no rows yet.
 
 Bookings are **fully anonymous**: there is no "booked by" column anywhere.
 `channel` records *how* a booking arrived (call centre vs front desk), never
@@ -185,29 +209,60 @@ is resolved through `Intl` in the salons' own timezone.
 ## Tests
 
 `npm test` runs the full suite. It covers the places a bug actually costs the
-business money, rather than chasing blanket coverage:
+business money, rather than chasing blanket coverage. There are three layers.
+
+**Logic** (`tests/*.test.ts`, no database needed):
 
 - **Double-booking logic** — overlap detection, back-to-back bookings, long
   bookings swallowing later slots, cancelled slots becoming reusable, editing
   a booking without it conflicting with itself.
+- **Request validation** — every field at its boundary, the French message
+  for each mistake, notes that can be removed, control characters.
 - **Auth and access control** — password hashing and verification, forged and
   expired session cookies, role escalation attempts, missing secrets.
-- **Phone normalisation and the `wa.me` link** — if a number is normalised
+- **Phone normalisation and the WhatsApp link** — if a number is normalised
   wrong the agent opens a chat with the wrong person, mid-call, with no
-  visible error.
-- **Driver error classification** — the audit found that a double booking was
-  being reported as a 500 rather than a 409 because the SQLSTATE lives on
-  `error.cause`, not on `error`. That path now has its own tests using the
-  error shapes both drivers really throw.
+  visible error — and the price the client is quoted.
+- **Driver error classification** — which database refusals become 409, 400
+  or 503, including the error shapes both drivers really throw.
 - **Login throttling** and the **deployment health checks**.
 
-Integration suites run against a real PostgreSQL when `TEST_DATABASE_URL` is
-set, and skip themselves when it is not, so `npm test` passes on a machine
-with no database.
+**Database** (`tests/integration/`, runs when `TEST_DATABASE_URL` is set,
+skips itself otherwise — `truncateAll()` refuses any other database):
 
-The database-level constraints were verified against a real PostgreSQL 16
-instance: identical slots and overlapping ranges are rejected, back-to-back
-bookings and re-booking a cancelled slot succeed.
+- the constraints themselves, with raw inserts that bypass the application;
+- `src/lib` and every route handler: status codes, auth, 400 rather than 500
+  for any malformed request (fuzzed), the live-update token under writes that
+  commit out of order;
+- the server actions (login, passwords, the owner's catalogue);
+- migration 0005 refusing atomically on conflicting data;
+- **five users at once** (`tests/scenarios/multi-user.ts`): the same slot
+  raced by five desks, overlapping durations, simultaneous moves, cancels and
+  revivals, five live screens converging on the database's day, a simulated
+  shift of agents retrying the next free slot, and 1,000 randomized
+  operations checked response-by-response against an independent model.
+  Every scenario ends by checking that nobody saw a 5xx and that the database
+  holds no double booking.
+
+```bash
+TEST_DATABASE_URL=postgres://postgres@127.0.0.1:5432/atelier_test npm test
+```
+
+The database must be UTF-8 and migrated (`DATABASE_URL=… npm run db:migrate`).
+Add `TEST_NEON_HTTP=1` to run the same database suites through the Neon HTTP
+driver production uses: `tests/helpers/neon-http-emulator.ts` stands in for
+Neon's SQL-over-HTTP endpoint in front of the local database, so result
+parsing and `NeonDbError` handling are exercised exactly as deployed.
+`tests/helpers/run-with-neon-emulator.ts` runs `scripts/migrate.ts` or
+`scripts/seed.ts` the same way.
+
+**Over HTTP** (`tests/e2e/`): the five-user scenarios again, against a
+production build served by `next start` in its own process, with the server
+pointed at the same database and signing with the same `SESSION_SECRET`:
+
+```bash
+E2E_BASE_URL=http://127.0.0.1:3100 TEST_DATABASE_URL=postgres://postgres@127.0.0.1:5432/atelier_e2e SESSION_SECRET=<the server's secret> npx vitest run tests/e2e
+```
 
 ## Deployment (Vercel)
 
@@ -219,12 +274,15 @@ database is behind a network you cannot reach from where the code is,
 [`docs/neon-setup.sql`](./docs/neon-setup.sql) does the same job in one paste:
 open the Neon console, go to the **SQL Editor**, paste the whole file, Run.
 
-It creates the schema, applies all three migrations, adds the double-booking
-constraint, inserts the three salons and both accounts, and records the
-migrations so a later `npm run db:migrate` sees them as already applied. It
-ends with a count you can check at a glance, and re-running it does nothing
-the second time — salons are upserted and existing accounts are left alone,
-so a password you have already changed is never reset.
+It creates the schema, applies every migration, adds the double-booking
+constraint, inserts the three salons, their service catalogues and both
+accounts, and records the migrations so a later `npm run db:migrate` sees them
+as already applied. It ends with a count you can check at a glance, and
+re-running it is safe — salons are upserted, a salon's catalogue is only
+seeded while it has none, and existing accounts are left alone, so a password
+you have already changed is never reset. Pasted over a database set up with
+an older copy of the file, it also upgrades the double-booking rule to the
+current one.
 
 Change both passwords from the owner screen once you are signed in.
 

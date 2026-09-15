@@ -1,12 +1,24 @@
 import "server-only";
 
-import { and, asc, eq, gte, inArray, lte, max, ne, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { bookings, salons, type Booking, type Salon } from "@/db/schema";
-import { isCheckViolation, isSlotConflictError } from "./db-errors";
+import {
+  isCheckViolation,
+  isSlotConflictError,
+  isTransientWriteError,
+  isUnstorableTextError,
+} from "./db-errors";
 import { normalizePhone } from "./phone";
-import { MINUTES_IN_DAY, isValidDateString, minutesToLabel } from "./time";
+import {
+  MINUTES_IN_DAY,
+  isSlotOver,
+  isValidDateString,
+  minutesToLabel,
+  nowMinutesInSalonTz,
+  todayInSalonTz,
+} from "./time";
 import type { CreateBookingInput, UpdateBookingInput } from "./validation";
 
 export class SlotTakenError extends Error {
@@ -99,35 +111,56 @@ export async function listBookingsInRange(
 }
 
 /**
- * A cheap change-detection watermark for the live-update poll: the newest
- * updated_at plus a row count. The count catches the one case a max() cannot
- * — a row disappearing — even though this app only soft-cancels today.
+ * A cheap change-detection watermark for the live-update poll: the row count
+ * plus a digest of every row version in the day.
  *
- * This is the query the calendar runs every couple of seconds per open tab,
- * so it must stay index-only and tiny: it returns two numbers regardless of
- * how many bookings the day holds.
+ * `xmin` is the id of the transaction that wrote a row version, so it moves
+ * on every insert and every update, whatever its timestamp says. This used to
+ * be max(updated_at) plus a count, which is blind to any write whose
+ * timestamp is not the newest by the time it commits — and with several
+ * agents saving at once that is ordinary: a request stamps its row, waits a
+ * few milliseconds on the network or on another agent's conflicting write,
+ * and commits after a later one a screen has already seen. That screen then
+ * stayed stale until something else changed. A server clock a little behind
+ * the database's did the same to every edit.
+ *
+ * This is the query every open calendar runs about once a second, so it stays
+ * tiny: one salon's day is a few dozen rows through bookings_salon_date_idx,
+ * and the answer is one short string however many bookings the day holds.
  */
 export async function bookingsWatermark(
   salonIds: string[],
   date: string,
 ): Promise<string> {
-  if (salonIds.length === 0) return "0:0";
+  return bookingsRangeWatermark(salonIds, date, date);
+}
+
+/**
+ * The same change token over a span of days — the week and month views show
+ * a whole month's bookings, and a booking made on any of those days must
+ * reach every screen, not only the ones that happen to have that day selected.
+ */
+export async function bookingsRangeWatermark(
+  salonIds: string[],
+  from: string,
+  to: string,
+): Promise<string> {
+  if (salonIds.length === 0) return "0:";
   const rows = await db
     .select({
-      latest: max(bookings.updatedAt),
       count: sql<number>`count(*)::int`,
+      digest: sql<string | null>`md5(string_agg(${bookings.id}::text || '.' || ${bookings}.xmin::text, ',' order by ${bookings.id}))`,
     })
     .from(bookings)
     .where(
-      and(inArray(bookings.salonId, salonIds), eq(bookings.bookingDate, date)),
+      and(
+        inArray(bookings.salonId, salonIds),
+        gte(bookings.bookingDate, from),
+        lte(bookings.bookingDate, to),
+      ),
     );
   const row = rows[0];
-  // node-postgres hands back a Date, the Neon HTTP driver a string. Both go
-  // through the same constructor so the watermark string is identical on
-  // either driver — a client must not see the value change just because the
-  // request happened to be served by a different runtime.
-  const latest = row?.latest ? new Date(row.latest).getTime() : 0;
-  return `${Number.isFinite(latest) ? latest : 0}:${row?.count ?? 0}`;
+  return `${row?.count ?? 0}:${row?.digest ?? ""}`;
 }
 
 /**
@@ -182,7 +215,37 @@ function translateWriteError(error: unknown): never {
       "Ce rendez-vous ne respecte pas les règles du planning.",
     );
   }
+  if (isUnstorableTextError(error)) {
+    throw new ValidationError("La saisie contient un caractère invalide.");
+  }
   throw error;
+}
+
+const WRITE_ATTEMPTS = 3;
+
+/**
+ * Runs one booking write, retrying the failures that mean "try again".
+ *
+ * Two agents' writes meeting inside the exclusion constraint can, rarely,
+ * each wait on the other; PostgreSQL then aborts one of them with a deadlock
+ * error. Nothing was stored, so the write is simply repeated — by then the
+ * other agent's booking has committed, and the retry either succeeds or
+ * reports the slot as taken. Only if the database keeps refusing is the
+ * collision reported as one, which is what it is.
+ */
+async function writeBooking<T>(write: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await write();
+    } catch (error) {
+      if (!isTransientWriteError(error)) translateWriteError(error);
+      if (attempt >= WRITE_ATTEMPTS) throw new SlotTakenError();
+      // Jittered, so two retrying agents do not meet again in lockstep.
+      await new Promise((resolve) =>
+        setTimeout(resolve, 5 + Math.random() * 20 * attempt),
+      );
+    }
+  }
 }
 
 export async function createBooking(
@@ -202,9 +265,20 @@ export async function createBooking(
     throw new ValidationError("Date invalide.");
   }
 
+  const today = todayInSalonTz();
+  if (input.bookingDate < today) {
+    throw new ValidationError("Impossible de réserver une date passée.");
+  }
+  if (
+    input.bookingDate === today &&
+    isSlotOver(input.startMin, salon.slotMin, nowMinutesInSalonTz())
+  ) {
+    throw new ValidationError("Ce créneau est déjà passé.");
+  }
+
   assertWithinOpeningHours(salon, input.startMin, input.durationMin);
 
-  try {
+  const booking = await writeBooking(async () => {
     const rows = await db
       .insert(bookings)
       .values({
@@ -219,18 +293,16 @@ export async function createBooking(
         channel: input.channel,
       })
       .returning();
+    return rows[0];
+  });
 
-    const booking = rows[0];
-    // RETURNING on a successful INSERT always yields the row; if it somehow
-    // does not, failing loudly beats handing the route an undefined to
-    // dereference into a 500 with no explanation.
-    if (!booking) {
-      throw new Error("Insert returned no row.");
-    }
-    return { booking, salon };
-  } catch (error) {
-    translateWriteError(error);
+  // RETURNING on a successful INSERT always yields the row; if it somehow
+  // does not, failing loudly beats handing the route an undefined to
+  // dereference into a 500 with no explanation.
+  if (!booking) {
+    throw new Error("Insert returned no row.");
   }
+  return { booking, salon };
 }
 
 export async function updateBooking(
@@ -303,16 +375,16 @@ export async function updateBooking(
     assertWithinOpeningHours(salon, nextStart, nextDuration);
   }
 
-  try {
+  return writeBooking(async () => {
     const rows = await db
       .update(bookings)
-      .set({ ...patch, updatedAt: new Date() })
+      // The database's clock, like created_at: a function whose clock runs
+      // slow must not stamp an edit as older than the insert before it.
+      .set({ ...patch, updatedAt: sql`now()` })
       .where(eq(bookings.id, id))
       .returning();
     return rows[0] ?? null;
-  } catch (error) {
-    translateWriteError(error);
-  }
+  });
 }
 
 /**
@@ -323,7 +395,7 @@ export async function updateBooking(
 export async function cancelBooking(id: string): Promise<Booking | null> {
   const rows = await db
     .update(bookings)
-    .set({ status: "cancelled", updatedAt: new Date() })
+    .set({ status: "cancelled", updatedAt: sql`now()` })
     // Re-cancelling an already-cancelled booking would bump updated_at and
     // push a pointless refresh to every open calendar, so only rows that are
     // actually live are touched.

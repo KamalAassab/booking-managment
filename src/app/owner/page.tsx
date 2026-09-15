@@ -1,32 +1,40 @@
-import { logout } from "@/app/actions/auth";
-import { ChevronLeft, ChevronRight, Check, Power } from "@/components/icons";
+import Link from "next/link";
+
+import { ArrowUpRight, Check, ChevronLeft, ChevronRight, SalonGlyph } from "@/components/icons";
 import { OwnerPasswordForms } from "@/components/owner-password-forms";
+import { PageHeader } from "@/components/page-header";
 import { Sidebar } from "@/components/sidebar";
 import type { Booking, Salon } from "@/db/schema";
 import { requireOwner } from "@/lib/auth";
 import { listBookingsForSalons, listSalons } from "@/lib/bookings";
+import { bookingPhase, formatDuration, occupancy } from "@/lib/day-layout";
 import { setupNoticeFor } from "@/lib/page-errors";
 import { formatPhoneForDisplay } from "@/lib/phone";
 import { salonColor, shortName } from "@/lib/salon-display";
 import { salonWhatsAppNumber } from "@/lib/salon-contact";
 import {
   addDays,
-  formatLongDate,
+  formatDayTitle,
   isValidDateString,
   minutesToLabel,
+  nowMinutesInSalonTz,
+  relativeDayLabel,
   todayInSalonTz,
 } from "@/lib/time";
 import { toSalonDTO } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
+/** Three salons stack on a phone: each shows its first bookings only. */
+const PHONE_ROWS = 6;
+
 export default async function OwnerPage({ searchParams }: PageProps<"/owner">) {
   await requireOwner();
 
   const params = await searchParams;
+  const today = todayInSalonTz();
   const requested = typeof params.date === "string" ? params.date : "";
-  const date =
-    requested && isValidDateString(requested) ? requested : todayInSalonTz();
+  const date = requested && isValidDateString(requested) ? requested : today;
 
   let salons: Salon[];
   let bookings: Booking[];
@@ -43,208 +51,156 @@ export default async function OwnerPage({ searchParams }: PageProps<"/owner">) {
   }
   const active = bookings.filter((b) => b.status !== "cancelled");
   const salonWhatsApp = salonWhatsAppNumber();
+  const nowMin = nowMinutesInSalonTz();
+  const relative = relativeDayLabel(date, today);
 
   return (
-    <div className="flex min-h-dvh flex-col md:flex-row" style={{ background: "var(--paper)" }}>
+    <div className="app-shell">
       <Sidebar role="owner" salons={salons.map(toSalonDTO)} />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Mobile Header */}
-        <header
-          className="sticky top-0 z-20 border-b md:hidden"
-          style={{
-            borderColor: "var(--line)",
-            background: "color-mix(in srgb, var(--surface) 94%, transparent)",
-            backdropFilter: "blur(8px)",
-          }}
-        >
-          <div className="flex items-center gap-3 px-4 py-3">
-            <a href="/bookings" className="mr-auto" title="L'Atelier Groupe">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="/logo-transparent.webp"
-                alt="L'Atelier Groupe"
-                className="h-7 w-auto max-w-[120px] object-contain"
-              />
-            </a>
-            <form action={logout}>
-              <button
-                type="submit"
-                className="flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
-                style={{ color: "var(--ink-soft)" }}
-                aria-label="Déconnexion"
-              >
-                <Power size={18} />
-              </button>
-            </form>
-          </div>
-        </header>
+        <main className="page-main">
+          <PageHeader
+            title={formatDayTitle(date, today)}
+            titleClassName="first-letter:uppercase"
+            description={
+              <>
+                {relative ? `${relative} · ` : ""}
+                <span data-nums>{active.length}</span> rendez-vous sur les {salons.length} salons
+              </>
+            }
+            actions={
+              <nav aria-label="Changer de jour" className="flex items-center gap-1">
+                <Link href={`/owner?date=${addDays(date, -1)}`} className="btn-icon" aria-label="Jour précédent">
+                  <ChevronLeft size={20} />
+                </Link>
+                <Link
+                  href={`/owner?date=${today}`}
+                  className="btn-secondary btn-sm"
+                  aria-disabled={date === today || undefined}
+                >
+                  Aujourd&apos;hui
+                </Link>
+                <Link href={`/owner?date=${addDays(date, 1)}`} className="btn-icon" aria-label="Jour suivant">
+                  <ChevronRight size={20} />
+                </Link>
+              </nav>
+            }
+          />
 
-        <main className="mx-auto w-full max-w-[1180px] flex-1 px-4 py-6 md:px-6 lg:px-8 lg:py-8">
-        {/* ---- The three salons -------------------------------------- */}
-        <section className="mb-10">
-          <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h1 className="t-title">
-                <span className="first-letter:uppercase">
-                  {formatLongDate(date)}
-                </span>
-              </h1>
-              <p className="t-small" style={{ color: "var(--ink-faint)" }}>
-                <span data-nums>{active.length}</span> rendez-vous sur les trois
-                salons
-              </p>
-            </div>
-            <div className="flex items-center gap-0.5">
-              <a
-                href={`/owner?date=${addDays(date, -1)}`}
-                className="flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
-                style={{ color: "var(--ink-soft)" }}
-                aria-label="Jour précédent"
-              >
-                <ChevronLeft size={18} />
-              </a>
-              <a
-                href={`/owner?date=${todayInSalonTz()}`}
-                className="t-small rounded-[8px] px-2.5 py-1.5 transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
-                style={{ color: "var(--ink-soft)" }}
-              >
-                Aujourd&apos;hui
-              </a>
-              <a
-                href={`/owner?date=${addDays(date, 1)}`}
-                className="flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
-                style={{ color: "var(--ink-soft)" }}
-                aria-label="Jour suivant"
-              >
-                <ChevronRight size={18} />
-              </a>
-            </div>
-          </div>
-
-          {/* One column per salon at xl; a single stack below, which is what
-              a phone can actually show. */}
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {/* One column per salon on wide screens; stacked on a phone. */}
+          <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" aria-label="Rendez-vous par salon">
             {salons.map((salon) => {
               const rows = active
                 .filter((b) => b.salonId === salon.id)
                 .sort((a, b) => a.startMin - b.startMin);
+              const load = occupancy(rows, salon);
 
               return (
-                <section key={salon.id} className="card p-4">
-                  <div className="mb-3 flex items-center gap-2">
-                    <span
-                      className="block h-1.5 w-1.5 shrink-0 rounded-full"
-                      style={{ background: salonColor(salon.slug) }}
-                      aria-hidden
-                    />
-                    <h2 className="t-heading mr-auto truncate">
-                      {shortName(salon.name)}
-                    </h2>
-                    <span
-                      className="t-small"
-                      style={{ color: "var(--ink-faint)" }}
-                      data-nums
-                    >
-                      {rows.length}
-                    </span>
+                <article key={salon.id} className="card flex flex-col p-0">
+                  <div className="flex flex-col gap-2.5 border-b px-4 py-3.5" style={{ borderColor: "var(--line)" }}>
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex shrink-0" style={{ color: salonColor(salon.slug) }}>
+                        <SalonGlyph slug={salon.slug} size={20} />
+                      </span>
+                      <h2 className="t-heading mr-auto truncate">{shortName(salon.name)}</h2>
+                      <span className="chip" data-nums>
+                        {rows.length} rdv
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="wk-load flex-1" aria-hidden>
+                        <span style={{ width: `${load}%` }} />
+                      </span>
+                      <span className="text-[12px]" style={{ color: "var(--ink-faint)" }} data-nums>
+                        {load} % occupé
+                      </span>
+                    </div>
                   </div>
 
                   {rows.length === 0 ? (
-                    <p className="t-small" style={{ color: "var(--ink-faint)" }}>
+                    <p className="t-small px-4 py-4" style={{ color: "var(--ink-faint)" }}>
                       Aucun rendez-vous.
                     </p>
                   ) : (
-                    <ul className="flex flex-col">
-                      {rows.map((b, i) => (
-                        <li
-                          key={b.id}
-                          className="flex items-baseline gap-3 py-2"
-                          style={{
-                            borderTop:
-                              i === 0 ? "none" : "1px solid var(--line)",
-                          }}
-                        >
-                          <time
-                            className="w-11 shrink-0 font-semibold"
-                            style={{
-                              color:
-                                b.status === "done"
-                                  ? "var(--ink-faint)"
-                                  : "var(--ink)",
-                            }}
+                    <ol className="flex flex-col gap-1.5 p-2.5">
+                      {rows.map((b, index) => {
+                        const phase = bookingPhase(b, today, nowMin);
+                        return (
+                          <li
+                            key={b.id}
+                            className={`bk flex-row items-center gap-3 py-2 ${index >= PHONE_ROWS ? "hidden md:flex" : ""}`}
+                            data-phase={phase}
                           >
-                            {minutesToLabel(b.startMin)}
-                          </time>
-                          <span className="min-w-0 flex-1">
-                            <span
-                              className="flex items-center gap-1.5 truncate font-semibold"
-                              style={{
-                                color:
-                                  b.status === "done"
-                                    ? "var(--ink-soft)"
-                                    : "var(--ink)",
-                              }}
-                            >
-                              {b.status === "done" ? (
-                                <span style={{ color: "var(--ink-faint)" }}>
-                                  <Check size={14} />
-                                </span>
-                              ) : null}
-                              {b.clientName}
+                            <span className="w-[44px] shrink-0 text-[13.5px] font-semibold" data-nums>
+                              {minutesToLabel(b.startMin)}
                             </span>
-                            <span
-                              className="t-small block truncate"
-                              style={{ color: "var(--ink-faint)" }}
-                            >
-                              {b.service} ·{" "}
-                              <span data-nums>
-                                {formatPhoneForDisplay(b.clientPhone)}
+                            <span className="flex min-w-0 flex-1 flex-col">
+                              <span className="bk-name text-[14px]">
+                                {phase === "done" ? (
+                                  <span className="shrink-0" style={{ color: "var(--success)" }}>
+                                    <Check size={13} />
+                                  </span>
+                                ) : null}
+                                <span className="truncate">{b.clientName}</span>
+                              </span>
+                              <span className="bk-line text-[12.5px]" data-nums>
+                                {b.service} · {formatPhoneForDisplay(b.clientPhone)}
                               </span>
                             </span>
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
+                            <span className="shrink-0 text-[12px]" style={{ color: "var(--ink-faint)" }} data-nums>
+                              {formatDuration(b.durationMin)}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ol>
                   )}
-                </section>
+
+                  <Link
+                    href={`/bookings?salon=${salon.slug}&date=${date}`}
+                    className="wk-more mx-2.5 mb-2.5 mt-auto"
+                  >
+                    {rows.length > PHONE_ROWS ? (
+                      <span className="md:hidden" data-nums>
+                        Voir les {rows.length - PHONE_ROWS} autres au planning
+                      </span>
+                    ) : null}
+                    <span className={rows.length > PHONE_ROWS ? "hidden md:inline" : undefined}>Ouvrir au planning</span>
+                    <ArrowUpRight size={15} />
+                  </Link>
+                </article>
               );
             })}
-          </div>
-        </section>
+          </section>
 
-        {/* ---- WhatsApp number --------------------------------------- */}
-        <section className="mb-10">
-          <h2 className="t-heading mb-1">Numéro WhatsApp du salon</h2>
-          <p className="t-small mb-3" style={{ color: "var(--ink-soft)" }}>
-            Les confirmations partent de ce numéro. Chaque poste du centre
-            d&apos;appels doit y être relié comme appareil lié (WhatsApp →
-            Réglages → Appareils liés).
-          </p>
-          <div className="card inline-flex items-baseline gap-3 px-4 py-3">
-            <span className="t-heading" data-nums>
-              {salonWhatsApp.display}
-            </span>
-            <span
-              className="t-small"
-              style={{ color: "var(--ink-faint)" }}
-              data-nums
-            >
-              {salonWhatsApp.e164}
-            </span>
-          </div>
-        </section>
+          <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+            <div className="card p-4 md:p-5">
+              <h2 className="t-heading">Numéro WhatsApp du salon</h2>
+              <p className="t-small mt-1" style={{ color: "var(--ink-soft)" }}>
+                Les confirmations partent de ce numéro. Chaque poste du centre d&apos;appels doit y
+                être relié comme appareil lié (WhatsApp, Réglages, Appareils liés).
+              </p>
+              <p className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="t-title" data-nums>
+                  {salonWhatsApp.display}
+                </span>
+                <span className="t-small" style={{ color: "var(--ink-faint)" }} data-nums>
+                  {salonWhatsApp.e164}
+                </span>
+              </p>
+            </div>
 
-        {/* ---- Passwords -------------------------------------------- */}
-        <section>
-          <h2 className="t-heading mb-1">Mots de passe</h2>
-          <p className="t-small mb-4" style={{ color: "var(--ink-soft)" }}>
-            Le personnel partage un seul compte. Changez son mot de passe quand
-            quelqu&apos;un quitte le groupe, puis communiquez-le aux équipes.
-          </p>
-          <OwnerPasswordForms />
-        </section>
-      </main>
+            <div className="card p-4 md:p-5">
+              <h2 className="t-heading">Mots de passe</h2>
+              <p className="t-small mb-4 mt-1" style={{ color: "var(--ink-soft)" }}>
+                Le personnel partage un seul compte. Changez son mot de passe quand quelqu&apos;un
+                quitte le groupe, puis communiquez-le aux équipes.
+              </p>
+              <OwnerPasswordForms />
+            </div>
+          </section>
+        </main>
       </div>
     </div>
   );

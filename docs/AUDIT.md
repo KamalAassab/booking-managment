@@ -157,3 +157,56 @@ Worth recording, because the audit did not change it:
 The suite went from 46 tests to 212, all passing. Some deliberate gaps
 remain: this is a suite aimed at the paths where a bug costs money, not at a
 coverage percentage.
+
+---
+
+# Second audit: five desks at once
+
+The first audit's database suites existed only as helpers — no test used
+them. This round built them, then drove the system the way the brief says it
+is used: five people on one shared account, booking into the same salons at
+the same moment. Every scenario ran in-process against the route handlers,
+over HTTP against a production build, and through both database drivers
+(node-postgres, and Neon's HTTP driver via a local emulator of its endpoint);
+the interface ran in five isolated Chrome sessions. Each finding below was
+reproduced by a failing test before it was fixed.
+
+## Double bookings and data
+
+| | |
+|---|---|
+| "Coupe enfant" and "coupe enfant" could both be booked at 10:00: the constraint compared service names exactly while the sheet's own check ignored case | `drizzle/0005` compares `lower(btrim(service))`, as one atomic `DO` block — on Neon the migrator runs statements outside a transaction, and a failed swap must not leave the table unprotected |
+| A note could never be removed: the emptied field was read as "no change" | `""` or `null` in a PATCH clears it |
+| The live-update token (newest `updated_at` + count) missed any write committing after a later one a screen had already seen — ordinary with several agents saving at once — and every edit from a server whose clock ran behind the database's. Those screens stayed stale until something else changed | A digest of the day's row versions (`xmin`); `updated_at` now uses the database clock |
+| A NUL or other control character in any field was a 500 | Stripped in validation; text the database cannot store is a 400 |
+| At 14:10 the grid offered the 14:00 slot, the server refused it as past, and the sheet had already announced success | One rule, `isSlotOver`, for grids, sheet and server: a slot is past once it has ended |
+| Two renders of `/owner/services` seeding at once (a link prefetch and the click) duplicated the catalogue — four gave 304 services instead of 76 | The losing copy is removed after the insert |
+| A new service was placed second from the top, not last | `max(sort_order) + 1` |
+| `%` in the client search matched every client | LIKE wildcards escaped |
+| A deadlock between two writes inside the exclusion constraint would have been a 500 (not reproduced in 7,500 raced inserts, but possible) | Retried; reported as a collision if it persists |
+
+## The booking sheet and the calendar
+
+| | |
+|---|---|
+| A slot taken by another desk while the sheet was open: "Rendez-vous enregistré" appeared and the WhatsApp tab was pointed at a confirmation before the refusal arrived, and the sheet had already closed, discarding everything typed | The sheet waits for the answer: a refusal keeps it open with the reason and the agent's input; WhatsApp is opened only for an accepted booking |
+| Any refusal — an invalid phone number — likewise closed the sheet and lost the input | Checked before sending; server refusals shown in place |
+| While an agent typed a phone number, another desk's booking arriving through the poll moved focus to the name field, so the remaining digits went into the client's name | The sheet's focus effect runs once per opening |
+| Escape in the client suggestions or a dropdown closed the whole sheet | Handled by the dropdown first |
+| A day not yet loaded showed the previous day's bookings under its own date — for seconds on a slow connection — and a late response could redraw the day just left; the same after a salon switch | Every response is checked against the day and salon on screen; an unloaded day shows as loading |
+| Week and month views never showed bookings other desks made on any day but the selected one | The poll watches the visible span |
+| Prices and durations edited in `/owner/services` never reached the sheet, the cards or the WhatsApp message | The sheet reads the live catalogue |
+| The Poste setting had no control, so every booking was filed as front desk | Réception / Appels toggle in the sidebar |
+| The add-service form closed before the server answered and its fields were reset on refusal; cell edits dropped server errors; Escape could still save | Errors shown in place, input kept |
+| Services could be given 1–4 minute durations the booking API refuses | Same bounds as bookings |
+| The day's "now" line and past-slot shading froze on a screen nobody touched | A slow clock re-renders it |
+| `docs/neon-setup.sql` created no services table or catalogue, recorded three of the migrations, and used older salon names and hours than the seed | Regenerated; re-running it upgrades an older setup |
+| `npm run check` failed on 12 lint errors | Clean |
+
+## Test coverage
+
+215 tests became 565: 303 need no database, 237 more run against one (all of
+them passing on both drivers), and 25 run over HTTP against a production
+build. The browser checks (21 scenarios, five isolated sessions) were run
+against the same build but are not part of the repository — they need a
+Chromium binary and a seeded database.

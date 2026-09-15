@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useId, useRef, useState, useTransition } from "react";
 
 import { searchClientsAction } from "@/app/actions/clients";
-import { Check, Phone, Search, User } from "@/components/icons";
 import type { ClientSuggestion } from "@/lib/clients";
 
 type Props = {
@@ -15,6 +14,18 @@ type Props = {
   required?: boolean;
 };
 
+/** Short enough to feel immediate, long enough not to query every keystroke. */
+const SEARCH_DEBOUNCE_MS = 120;
+
+/**
+ * The client name field, suggesting clients already on file as the agent
+ * types, so a returning client's phone number is one pick away.
+ *
+ * Suggestions follow typing only. A name that arrives any other way (an
+ * existing booking opened for editing, a suggestion just picked) is not a
+ * question: searching on it opened a list over the form the moment the
+ * sheet appeared, and again right after a client had been chosen.
+ */
 export function ClientCombobox({
   value,
   onChange,
@@ -26,64 +37,54 @@ export function ClientCombobox({
   const [suggestions, setSuggestions] = useState<ClientSuggestion[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [placement, setPlacement] = useState<"bottom" | "top">("bottom");
-  const [selectedIndex, setSelectedIndex] = useState<number>(-1);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const [isPending, startTransition] = useTransition();
+  const listboxId = useId();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const internalInputRef = useRef<HTMLInputElement | null>(null);
   const activeInputRef = inputRef || internalInputRef;
+  /** True once the current value came from the keyboard. */
+  const typedRef = useRef(false);
 
-  // Compute smart placement
-  useEffect(() => {
-    if (isOpen && containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const spaceAbove = rect.top;
-      if (spaceBelow < 230 && spaceAbove > spaceBelow) {
-        setPlacement("top");
-      } else {
-        setPlacement("bottom");
-      }
-    }
-  }, [isOpen]);
-
-  // Debounced search when value changes
+  // Each search is numbered so a slow answer for "Sa" cannot land after, and
+  // replace, the answer for "Sarah".
+  const latestSearch = useRef(0);
   useEffect(() => {
     const term = value.trim();
-    if (term.length < 1) {
-      setSuggestions([]);
-      setIsOpen(false);
-      return;
-    }
+    const search = ++latestSearch.current;
+    if (!typedRef.current || term.length < 1) return;
 
     const timer = setTimeout(() => {
       startTransition(async () => {
         try {
           const results = await searchClientsAction(term);
+          if (search !== latestSearch.current || !typedRef.current) return;
           setSuggestions(results);
-          if (results.length > 0) {
-            setIsOpen(true);
-            setSelectedIndex(-1);
-          } else {
-            setIsOpen(false);
+          setActiveIndex(-1);
+          if (results.length > 0 && containerRef.current) {
+            const rect = containerRef.current.getBoundingClientRect();
+            const below = window.innerHeight - rect.bottom;
+            setPlacement(below < 260 && rect.top > below ? "top" : "bottom");
           }
+          setIsOpen(results.length > 0);
         } catch {
+          if (search !== latestSearch.current) return;
           setSuggestions([]);
           setIsOpen(false);
         }
       });
-    }, 150);
+    }, SEARCH_DEBOUNCE_MS);
 
     return () => clearTimeout(timer);
   }, [value]);
 
-  // Close on outside click
+  // An emptied field has nothing to suggest, whatever the last search found.
+  const showSuggestions = isOpen && value.trim().length > 0 && suggestions.length > 0;
+
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(event.target as Node)
-      ) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
         setIsOpen(false);
       }
     }
@@ -92,36 +93,33 @@ export function ClientCombobox({
   }, []);
 
   function handleSelect(item: ClientSuggestion) {
+    typedRef.current = false;
     onChange(item.name);
-    onSelectClient({
-      name: item.name,
-      phone: item.phone,
-      service: item.lastService,
-    });
+    onSelectClient({ name: item.name, phone: item.phone, service: item.lastService });
     setIsOpen(false);
-    setSelectedIndex(-1);
+    setActiveIndex(-1);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (!isOpen || suggestions.length === 0) return;
-
+    if (!showSuggestions) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setSelectedIndex((prev) => (prev < suggestions.length - 1 ? prev + 1 : 0));
+      setActiveIndex((prev) => (prev < suggestions.length - 1 ? prev + 1 : 0));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setSelectedIndex((prev) => (prev > 0 ? prev - 1 : suggestions.length - 1));
+      setActiveIndex((prev) => (prev > 0 ? prev - 1 : suggestions.length - 1));
     } else if (e.key === "Enter") {
-      if (selectedIndex >= 0 && selectedIndex < suggestions.length) {
+      if (activeIndex >= 0 && activeIndex < suggestions.length) {
         e.preventDefault();
-        handleSelect(suggestions[selectedIndex]);
+        handleSelect(suggestions[activeIndex]);
       }
     } else if (e.key === "Escape") {
+      // Marked as handled, so the booking sheet around this field closes the
+      // suggestions only, not the booking being typed.
+      e.preventDefault();
       setIsOpen(false);
     }
   }
-
-  const datalistId = "clients-autocomplete-datalist";
 
   return (
     <div ref={containerRef} className="relative w-full">
@@ -133,108 +131,79 @@ export function ClientCombobox({
           name="client_name"
           required={required}
           autoComplete="off"
+          role="combobox"
+          aria-expanded={showSuggestions}
+          aria-controls={listboxId}
+          aria-autocomplete="list"
+          aria-activedescendant={showSuggestions && activeIndex >= 0 ? `${listboxId}-${activeIndex}` : undefined}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => {
+            typedRef.current = true;
+            onChange(e.target.value);
+          }}
           onKeyDown={handleKeyDown}
           onFocus={() => {
-            if (suggestions.length > 0) setIsOpen(true);
+            if (typedRef.current && suggestions.length > 0) setIsOpen(true);
           }}
           disabled={disabled}
-          placeholder="Ex. Sarah Benali"
-          className="field pr-8"
+          placeholder="Nom et prénom"
+          className="field pr-9"
         />
         {isPending ? (
           <span
-            className="pointer-events-none absolute right-2.5 flex h-4 w-4 animate-spin items-center justify-center rounded-full border-2 border-t-transparent"
+            className="pointer-events-none absolute right-3 h-4 w-4 animate-spin rounded-full border-2"
             style={{ borderColor: "var(--accent)", borderTopColor: "transparent" }}
+            aria-hidden
           />
         ) : null}
       </div>
 
-      {/* Mobile Native Datalist (Standard mobile phone autocomplete mechanism) */}
-      <datalist id={datalistId}>
-        {suggestions.map((s) => (
-          <option
-            key={`dl-${s.phone}-${s.name}`}
-            value={s.name}
-            label={`${s.formattedPhone} (${s.totalBookings} rdv)`}
-          />
-        ))}
-      </datalist>
-
-      {/* Desktop Premium Dropdown Popover */}
-      {isOpen && suggestions.length > 0 && (
+      {showSuggestions ? (
         <div
-          className={`card absolute left-0 right-0 z-50 hidden max-h-[220px] overflow-y-auto overscroll-contain p-1.5 shadow-xl sm:block duration-150 animate-in fade-in ${
-            placement === "top"
-              ? "bottom-[calc(100%+4px)] slide-in-from-bottom-1"
-              : "top-[calc(100%+4px)] slide-in-from-top-1"
-          }`}
-          style={{
-            background: "var(--surface)",
-            borderColor: "var(--line)",
-            boxShadow: "0 10px 30px -5px rgba(0, 0, 0, 0.18), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
-          }}
+          id={listboxId}
           role="listbox"
+          aria-label="Clients existants"
+          className={`popover absolute left-0 right-0 max-h-[260px] overflow-y-auto overscroll-contain p-1.5 ${
+            placement === "top" ? "bottom-[calc(100%+6px)]" : "top-[calc(100%+6px)]"
+          }`}
         >
-          <div className="flex items-center justify-between px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--ink-faint)" }}>
+          <p className="flex items-center justify-between px-2.5 pb-1 pt-0.5 text-[12px] font-medium" style={{ color: "var(--ink-faint)" }}>
             <span>Clients existants</span>
-            <span>{suggestions.length} trouvé{suggestions.length > 1 ? "s" : ""}</span>
-          </div>
-
-          <div className="mt-1 flex flex-col gap-1">
-            {suggestions.map((item, idx) => {
-              const isSelected = idx === selectedIndex;
-              return (
-                <button
-                  key={`${item.phone}-${item.name}`}
-                  type="button"
-                  onClick={() => handleSelect(item)}
-                  onMouseEnter={() => setSelectedIndex(idx)}
-                  className="flex w-full items-center justify-between rounded-[8px] px-3 py-2 text-left transition-colors duration-100"
-                  style={{
-                    background: isSelected ? "var(--surface-sunk)" : "transparent",
-                    color: "var(--ink)",
-                    border: isSelected ? "1px solid var(--accent-tint)" : "1px solid transparent",
-                  }}
-                  role="option"
-                  aria-selected={isSelected}
-                >
-                  <div className="flex flex-col min-w-0 pr-2">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate text-[13px] font-semibold" style={{ color: "var(--ink)" }}>
-                        {item.name}
-                      </span>
-                      <span
-                        className="t-small shrink-0 rounded-full px-1.5 py-0.2 text-[10px] font-medium"
-                        style={{
-                          background: "var(--accent-tint)",
-                          color: "var(--accent-hover)",
-                        }}
-                      >
-                        {item.totalBookings} rdv
-                      </span>
-                    </div>
-                    <span className="t-small mt-0.5 truncate text-[11px]" style={{ color: "var(--ink-soft)" }}>
-                      {item.formattedPhone} {item.lastService ? `• ${item.lastService}` : ""}
-                    </span>
-                  </div>
-
-                  <span
-                    className="t-small flex shrink-0 items-center gap-1 rounded-[6px] px-2 py-1 text-[11px] font-medium transition-opacity"
-                    style={{
-                      background: isSelected ? "var(--surface)" : "var(--surface-sunk)",
-                      color: isSelected ? "var(--accent)" : "var(--ink-faint)",
-                    }}
-                  >
-                    Choisir
+            <span data-nums>{suggestions.length}</span>
+          </p>
+          {suggestions.map((item, idx) => {
+            const active = idx === activeIndex;
+            return (
+              <button
+                key={`${item.phone}-${item.name}`}
+                id={`${listboxId}-${idx}`}
+                type="button"
+                role="option"
+                aria-selected={active}
+                data-active={active ? "" : undefined}
+                tabIndex={-1}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => handleSelect(item)}
+                onMouseEnter={() => setActiveIndex(idx)}
+                className="option"
+              >
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate text-[14px] font-semibold" style={{ color: "var(--ink)" }}>
+                    {item.name}
                   </span>
-                </button>
-              );
-            })}
-          </div>
+                  <span className="truncate text-[12.5px]" style={{ color: "var(--ink-soft)" }} data-nums>
+                    {item.formattedPhone}
+                    {item.lastService ? ` · ${item.lastService}` : ""}
+                  </span>
+                </span>
+                <span className="chip shrink-0" data-nums>
+                  {item.totalBookings} rdv
+                </span>
+              </button>
+            );
+          })}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

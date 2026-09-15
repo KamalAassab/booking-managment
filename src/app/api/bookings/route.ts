@@ -6,7 +6,7 @@ import {
   unauthorized,
 } from "@/lib/api";
 import { createBooking, getSalonBySlug, listBookings } from "@/lib/bookings";
-import { nowMinutesInSalonTz, todayInSalonTz } from "@/lib/time";
+import { catalogsForSalons } from "@/lib/services";
 import { toBookingDTO } from "@/lib/types";
 import { createBookingSchema, listQuerySchema } from "@/lib/validation";
 import { buildWhatsAppLink } from "@/lib/whatsapp";
@@ -56,17 +56,19 @@ export async function POST(request: Request) {
       );
     }
 
-    const today = todayInSalonTz();
-    if (parsed.data.bookingDate < today) {
-      return jsonNoStore({ error: "Impossible de réserver une date passée." }, 400);
-    }
-    if (parsed.data.bookingDate === today && parsed.data.startMin < nowMinutesInSalonTz()) {
-      return jsonNoStore({ error: "Ce créneau est déjà passé." }, 400);
-    }
-
+    // Past dates and slots that have already ended are refused inside
+    // createBooking, where the salon's slot length is known.
     const { booking, salon } = await createBooking(parsed.data);
 
+    // The booking is committed at this point, so nothing below may turn it
+    // into an error response — an agent told "failed" would book it again.
+    // A catalogue that cannot be read just means the static prices.
+    const catalog = await catalogsForSalons([salon])
+      .then((catalogs) => catalogs[salon.slug])
+      .catch(() => undefined);
+
     const whatsappUrl = buildWhatsAppLink({
+      catalog,
       clientName: booking.clientName,
       clientPhone: booking.clientPhone,
       salonName: salon.name,

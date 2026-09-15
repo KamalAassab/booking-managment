@@ -1,6 +1,6 @@
 import { formatLongDate, minutesToLabel } from "./time";
 import { waDigits } from "./phone";
-import { getServicesForSalon } from "./services-catalog";
+import { findCatalogEntry, getServicesForSalon, type ServiceCatalogEntry } from "./services-catalog";
 
 export type ConfirmationInput = {
   clientName: string;
@@ -11,8 +11,15 @@ export type ConfirmationInput = {
   startMin: number;
   durationMin?: number;
   service: string;
+  /**
+   * A number is quoted as given. `undefined` means "look it up" — in
+   * `catalog` when one is supplied, otherwise in the static list. `null` or
+   * an empty string means the message carries no price.
+   */
   price?: number | string | null;
   notes?: string | null;
+  /** The salon's live catalogue (the owner's prices), when the caller has it. */
+  catalog?: ServiceCatalogEntry[];
 };
 
 /**
@@ -51,9 +58,11 @@ export function buildConfirmationMessage(b: ConfirmationInput): string {
   const firstName = b.clientName.trim().split(/\s+/)[0] || b.clientName.trim();
   const salonIcon = getSalonEmoji(b.salonName, b.salonSlug);
 
-  // Determine price if not explicitly passed
+  // Look the price up only when the caller did not decide it. The booking
+  // sheet passes the price shown in its Tarif field — possibly edited, or
+  // cleared on purpose — and that is what the client must be quoted.
   let resolvedPrice = b.price;
-  if (resolvedPrice === undefined || resolvedPrice === null || resolvedPrice === "") {
+  if (resolvedPrice === undefined) {
     const slug =
       b.salonSlug ||
       (b.salonName.toLowerCase().includes("gold")
@@ -62,11 +71,8 @@ export function buildConfirmationMessage(b: ConfirmationInput): string {
           b.salonName.toLowerCase().includes("barber")
         ? "barber"
         : "vip");
-    const catalog = getServicesForSalon(slug);
-    const found = catalog.find((e) => e.name.toLowerCase() === b.service.toLowerCase());
-    if (found) {
-      resolvedPrice = found.price;
-    }
+    const found = findCatalogEntry(b.catalog ?? getServicesForSalon(slug), b.service);
+    resolvedPrice = found?.price;
   }
 
   const lines: string[] = [
@@ -103,6 +109,21 @@ export function buildConfirmationMessage(b: ConfirmationInput): string {
  */
 export function buildWhatsAppLink(b: ConfirmationInput): string {
   const phone = waDigits(b.clientPhone);
-  const text = encodeURIComponent(buildConfirmationMessage(b));
+  const text = encodeURIComponent(wellFormed(buildConfirmationMessage(b)));
   return `https://api.whatsapp.com/send?phone=${phone}&text=${text}`;
+}
+
+/**
+ * encodeURIComponent throws on half an emoji — a lone UTF-16 surrogate, which
+ * a paste cut mid-character can leave in a name or note. That would crash the
+ * booking sheet's submit handler; the replacement character is the better
+ * outcome.
+ */
+function wellFormed(text: string): string {
+  return typeof text.toWellFormed === "function"
+    ? text.toWellFormed()
+    : text.replace(
+        /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
+        "�",
+      );
 }

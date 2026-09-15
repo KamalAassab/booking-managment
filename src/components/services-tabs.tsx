@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  useActionState,
-  useOptimistic,
-  useState,
-  useTransition,
-} from "react";
-import { useFormStatus } from "react-dom";
+import { useRef, useState, useTransition } from "react";
 
 import {
   createServiceAction,
@@ -14,9 +8,10 @@ import {
   updateServiceAction,
   type ServiceActionState,
 } from "@/app/actions/services";
-import { Plus, Close, Check } from "@/components/icons";
+import { Plus, Close } from "@/components/icons";
 import { salonColor, shortName } from "@/lib/salon-display";
 import type { Service } from "@/lib/services";
+import { MAX_DURATION_MIN, MIN_DURATION_MIN } from "@/lib/validation";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 type SalonTab = {
@@ -69,10 +64,24 @@ function EditableCell({
 }) {
   const [editing, setEditing] = useState(false);
   const [localValue, setLocalValue] = useState(String(value));
+  const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // Enter commits and the input then unmounts, which fires blur — so the same
+  // edit used to be sent twice, and Escape's unmount sent the very edit it was
+  // meant to discard. Once an edit is settled, the trailing blur is ignored.
+  const settled = useRef(false);
+
+  function cancel() {
+    settled.current = true;
+    setError(null);
+    setEditing(false);
+  }
 
   function commit() {
-    if (localValue === String(value)) {
+    if (settled.current) return;
+    settled.current = true;
+    if (localValue.trim() === String(value)) {
+      setError(null);
       setEditing(false);
       return;
     }
@@ -80,7 +89,15 @@ function EditableCell({
     fd.set("id", serviceId);
     fd.set(field, localValue);
     startTransition(async () => {
-      await updateServiceAction({}, fd);
+      const result = await updateServiceAction({}, fd);
+      if (result.error) {
+        // Stay in the field with the reason, rather than snapping back to the
+        // old value as if the edit had been saved.
+        setError(result.error);
+        settled.current = false;
+        return;
+      }
+      setError(null);
       setEditing(false);
     });
   }
@@ -90,11 +107,13 @@ function EditableCell({
       <button
         type="button"
         onClick={() => {
+          settled.current = false;
           setLocalValue(String(value));
           setEditing(true);
         }}
-        title="Cliquer pour modifier"
-        className="group/cell flex items-center gap-1 rounded-[6px] px-2 py-1 text-left transition-colors duration-[120ms] hover:bg-[color:var(--accent-tint)]"
+        title="Modifier"
+        aria-label={`Modifier : ${value}${suffix ?? ""}`}
+        className="svc-cell"
         style={{ opacity: pending ? 0.5 : 1 }}
       >
         {prefix && (
@@ -109,37 +128,52 @@ function EditableCell({
   }
 
   return (
-    <div className="flex items-center gap-1">
-      {prefix && (
-        <span style={{ color: "var(--ink-faint)", fontSize: 12 }}>{prefix}</span>
-      )}
-      <input
-        autoFocus
-        type={type}
-        value={localValue}
-        min={min}
-        max={max}
-        onChange={(e) => setLocalValue(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") commit();
-          if (e.key === "Escape") {
-            setLocalValue(String(value));
-            setEditing(false);
-          }
-        }}
-        className="field"
-        style={{
-          minHeight: 32,
-          padding: "4px 8px",
-          fontSize: 14,
-          width: type === "number" ? 80 : "100%",
-          minWidth: type === "text" ? 120 : undefined,
-        }}
-      />
-      {suffix && (
-        <span style={{ color: "var(--ink-faint)", fontSize: 12 }}>{suffix}</span>
-      )}
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-1">
+        {prefix && (
+          <span style={{ color: "var(--ink-faint)", fontSize: 12 }}>{prefix}</span>
+        )}
+        <input
+          autoFocus
+          type={type}
+          value={localValue}
+          min={min}
+          max={max}
+          disabled={pending}
+          aria-invalid={error ? true : undefined}
+          onChange={(e) => {
+            settled.current = false;
+            setLocalValue(e.target.value);
+          }}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit();
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              cancel();
+            }
+          }}
+          className="field"
+          style={{
+            minHeight: 40,
+            padding: "6px 10px",
+            fontSize: 14,
+            width: type === "number" ? 80 : "100%",
+            minWidth: type === "text" ? 120 : undefined,
+          }}
+        />
+        {suffix && (
+          <span style={{ color: "var(--ink-faint)", fontSize: 12 }}>{suffix}</span>
+        )}
+      </div>
+      {error ? (
+        <p role="alert" className="t-small" style={{ color: "var(--danger)" }}>
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -150,19 +184,30 @@ function EditableCell({
 
 function DeleteButton({ serviceId }: { serviceId: string }) {
   const [confirm, setConfirm] = useState(false);
-  const [, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
 
   if (!confirm) {
     return (
-      <button
-        type="button"
-        onClick={() => setConfirm(true)}
-        aria-label="Supprimer"
-        className="flex h-7 w-7 items-center justify-center rounded-[6px] opacity-0 transition-opacity duration-[120ms] group-hover/row:opacity-100 hover:bg-[color:var(--danger-tint)]"
-        style={{ color: "var(--danger)" }}
-      >
-        <Close size={14} />
-      </button>
+      <div className="flex items-center gap-1">
+        {error ? (
+          <span role="alert" className="t-small" style={{ color: "var(--danger)" }}>
+            {error}
+          </span>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => {
+            setError(null);
+            setConfirm(true);
+          }}
+          aria-label="Supprimer ce service"
+          title="Supprimer ce service"
+          className="svc-delete"
+        >
+          <Close size={16} />
+        </button>
+      </div>
     );
   }
 
@@ -173,23 +218,26 @@ function DeleteButton({ serviceId }: { serviceId: string }) {
       </span>
       <button
         type="button"
+        disabled={pending}
         onClick={() => {
           const fd = new FormData();
           fd.set("id", serviceId);
           startTransition(async () => {
-            await deleteServiceAction({}, fd);
+            const result = await deleteServiceAction({}, fd);
+            if (result.error) {
+              setError(result.error);
+              setConfirm(false);
+            }
           });
         }}
-        className="btn btn-danger btn-sm"
-        style={{ minHeight: 28, padding: "0 10px", fontSize: 12 }}
+        className="btn-danger btn-sm"
       >
         Oui
       </button>
       <button
         type="button"
         onClick={() => setConfirm(false)}
-        className="btn btn-quiet btn-sm"
-        style={{ minHeight: 28, padding: "0 10px", fontSize: 12 }}
+        className="btn-quiet btn-sm"
       >
         Non
       </button>
@@ -201,17 +249,15 @@ function DeleteButton({ serviceId }: { serviceId: string }) {
 // Add service row form
 // ---------------------------------------------------------------------------
 
-function AddServiceSubmit() {
-  const { pending } = useFormStatus();
+function AddServiceSubmit({ pending }: { pending: boolean }) {
   return (
     <button
       type="submit"
       disabled={pending}
-      className="btn-primary btn-sm flex items-center gap-1.5"
-      style={{ minHeight: 36 }}
+      className="btn-primary flex-1 sm:flex-none"
     >
-      <Plus size={14} />
-      {pending ? "Ajout…" : "Ajouter"}
+      <Plus size={16} />
+      {pending ? "Ajout…" : "Ajouter le service"}
     </button>
   );
 }
@@ -224,31 +270,66 @@ function AddServiceForm({
   categories: string[];
 }) {
   const [open, setOpen] = useState(false);
-  const [state, formAction] = useActionState<ServiceActionState, FormData>(
-    createServiceAction,
-    {},
-  );
+  // Remounts the form body on every opening, so an error from a previous
+  // attempt is not still showing on a fresh one.
+  const [openings, setOpenings] = useState(0);
 
   if (!open) {
     return (
       <button
         type="button"
-        onClick={() => setOpen(true)}
-        className="btn btn-quiet btn-sm flex items-center gap-1.5 mt-2"
+        onClick={() => {
+          setOpenings((n) => n + 1);
+          setOpen(true);
+        }}
+        className="btn-secondary w-full sm:w-auto"
       >
-        <Plus size={14} />
+        <Plus size={16} />
         Nouveau service
       </button>
     );
   }
 
   return (
+    <AddServiceFormBody
+      key={openings}
+      salonId={salonId}
+      categories={categories}
+      onClose={() => setOpen(false)}
+    />
+  );
+}
+
+function AddServiceFormBody({
+  salonId,
+  categories,
+  onClose,
+}: {
+  salonId: string;
+  categories: string[];
+  onClose: () => void;
+}) {
+  // The form closes only once the service is actually saved. It used to close
+  // as soon as it was submitted — before the server answered — so a refused
+  // service vanished with its error. It is submitted through onSubmit rather
+  // than `<form action>`: React resets an action form's fields when the
+  // action finishes, which would wipe what the owner typed along with the
+  // reason it was refused.
+  const [state, setState] = useState<ServiceActionState>({});
+  const [pending, startTransition] = useTransition();
+
+  return (
     <form
-      action={async (fd) => {
-        await formAction(fd);
-        setOpen(false);
+      onSubmit={(event) => {
+        event.preventDefault();
+        const formData = new FormData(event.currentTarget);
+        startTransition(async () => {
+          const result = await createServiceAction({}, formData);
+          if (result.success) onClose();
+          else setState(result);
+        });
       }}
-      className="mt-3 card p-4 anim-panel"
+      className="card p-4 md:p-5"
     >
       <p className="t-heading mb-3">Nouveau service</p>
       <input type="hidden" name="salonId" value={salonId} />
@@ -281,7 +362,7 @@ function AddServiceForm({
             id={`name-${salonId}`}
             name="name"
             required
-            placeholder="Ex: Soin Express"
+            placeholder="Soin Express"
             className="field"
           />
         </div>
@@ -294,8 +375,8 @@ function AddServiceForm({
             id={`dur-${salonId}`}
             name="durationMin"
             type="number"
-            min={1}
-            max={480}
+            min={MIN_DURATION_MIN}
+            max={MAX_DURATION_MIN}
             defaultValue={30}
             required
             className="field"
@@ -330,11 +411,11 @@ function AddServiceForm({
       )}
 
       <div className="mt-4 flex gap-2">
-        <AddServiceSubmit />
+        <AddServiceSubmit pending={pending} />
         <button
           type="button"
-          onClick={() => setOpen(false)}
-          className="btn btn-quiet btn-sm"
+          onClick={onClose}
+          className="btn-quiet"
         >
           Annuler
         </button>
@@ -355,71 +436,57 @@ function CategorySection({
   items: Service[];
 }) {
   return (
-    <section className="mb-6">
-      <h3
-        className="t-micro mb-2 px-2"
-        style={{ color: "var(--ink-soft)" }}
-      >
+    <section>
+      <h3 className="mb-2 flex items-baseline gap-2 px-1 text-[13px] font-semibold" style={{ color: "var(--ink)" }}>
         {category}
+        <span className="font-medium" style={{ color: "var(--ink-faint)" }} data-nums>
+          {items.length}
+        </span>
       </h3>
 
-      <div className="card overflow-hidden">
-        {/* Table header */}
+      <div className="card overflow-hidden p-0">
         <div
-          className="hidden grid-cols-[1fr_140px_100px_80px_44px] gap-2 border-b px-4 py-2 sm:grid"
-          style={{ borderColor: "var(--line)", background: "var(--surface-sunk)" }}
+          className="svc-row svc-head hidden md:grid"
+          style={{ borderColor: "var(--line)", background: "var(--surface-hover)" }}
+          aria-hidden
         >
-          <span className="label mb-0">Service</span>
-          <span className="label mb-0">Catégorie</span>
-          <span className="label mb-0">Durée</span>
-          <span className="label mb-0">Prix</span>
-          <span />
+          <span className="[grid-area:name]">Service</span>
+          <span className="[grid-area:cat]">Catégorie</span>
+          <span className="[grid-area:dur]">Durée</span>
+          <span className="[grid-area:price]">Prix</span>
         </div>
 
-        {items.map((service, i) => (
-          <div
-            key={service.id}
-            className="group/row flex flex-col gap-2 border-b px-4 py-3 sm:grid sm:grid-cols-[1fr_140px_100px_80px_44px] sm:items-center sm:gap-2"
-            style={{
-              borderColor: i === items.length - 1 ? "transparent" : "var(--line)",
-            }}
-          >
-            {/* Name */}
-            <EditableCell
-              serviceId={service.id}
-              field="name"
-              value={service.name}
-              type="text"
-            />
-            {/* Category (editable) */}
-            <EditableCell
-              serviceId={service.id}
-              field="category"
-              value={service.category}
-              type="text"
-            />
-            {/* Duration */}
-            <EditableCell
-              serviceId={service.id}
-              field="durationMin"
-              value={service.durationMin}
-              type="number"
-              suffix=" min"
-              min={1}
-              max={480}
-            />
-            {/* Price */}
-            <EditableCell
-              serviceId={service.id}
-              field="price"
-              value={service.price}
-              type="number"
-              suffix=" MAD"
-              min={0}
-              max={99999}
-            />
-            {/* Delete */}
-            <div className="flex justify-end">
+        {items.map((service) => (
+          <div key={service.id} className="svc-row">
+            <div className="min-w-0 font-semibold [grid-area:name]">
+              <EditableCell serviceId={service.id} field="name" value={service.name} type="text" />
+            </div>
+            <div className="min-w-0 text-[13px] [grid-area:cat]" style={{ color: "var(--ink-soft)" }}>
+              <EditableCell serviceId={service.id} field="category" value={service.category} type="text" />
+            </div>
+            <div className="[grid-area:dur]" data-nums>
+              <EditableCell
+                serviceId={service.id}
+                field="durationMin"
+                value={service.durationMin}
+                type="number"
+                suffix=" min"
+                min={MIN_DURATION_MIN}
+                max={MAX_DURATION_MIN}
+              />
+            </div>
+            <div className="[grid-area:price]" data-nums>
+              <EditableCell
+                serviceId={service.id}
+                field="price"
+                value={service.price}
+                type="number"
+                suffix=" MAD"
+                min={0}
+                max={99999}
+              />
+            </div>
+            <div className="flex justify-end [grid-area:del]">
               <DeleteButton serviceId={service.id} />
             </div>
           </div>
@@ -438,21 +505,11 @@ function SalonPanel({ tab }: { tab: SalonTab }) {
   const categories = groups.map((g) => g.category);
 
   return (
-    <div>
-      <div
-        className="mb-4 flex items-center gap-2 rounded-[12px] px-4 py-3"
-        style={{ background: "var(--surface-sunk)" }}
-      >
-        <span
-          className="block h-2 w-2 shrink-0 rounded-full"
-          style={{ background: salonColor(tab.salonSlug) }}
-          aria-hidden
-        />
-        <p className="t-small" style={{ color: "var(--ink-soft)" }}>
-          <strong style={{ color: "var(--ink)" }}>{tab.items.length}</strong>{" "}
-          service{tab.items.length !== 1 ? "s" : ""} — cliquer une cellule pour modifier
-        </p>
-      </div>
+    <div className="flex flex-col gap-5">
+      <p className="t-small" style={{ color: "var(--ink-soft)" }} data-nums>
+        {tab.items.length} service{tab.items.length !== 1 ? "s" : ""} dans {groups.length} catégorie
+        {groups.length !== 1 ? "s" : ""}
+      </p>
 
       {groups.length === 0 ? (
         <p className="t-small" style={{ color: "var(--ink-faint)" }}>
@@ -477,13 +534,14 @@ export function ServicesTabs({ data }: Props) {
   const defaultTab = data[0]?.salonId ?? "";
 
   return (
-    <Tabs defaultValue={defaultTab} className="w-full">
-      <TabsList aria-label="Salon" className="mb-6">
+    <Tabs defaultValue={defaultTab} className="flex w-full flex-col gap-4">
+      <TabsList aria-label="Salon" className="w-full sm:w-auto sm:self-start">
         {data.map((tab) => (
           <TabsTrigger
             key={tab.salonId}
             value={tab.salonId}
             color={salonColor(tab.salonSlug)}
+            className="flex-1 justify-center sm:flex-none"
           >
             {shortName(tab.salonName)}
           </TabsTrigger>

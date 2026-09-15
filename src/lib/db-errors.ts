@@ -30,6 +30,10 @@ export const SQLSTATE = {
   INVALID_AUTHORIZATION: "28000",
   UNDEFINED_DATABASE: "3D000",
   INSUFFICIENT_PRIVILEGE: "42501",
+  SERIALIZATION_FAILURE: "40001",
+  DEADLOCK_DETECTED: "40P01",
+  CHARACTER_NOT_IN_REPERTOIRE: "22021",
+  UNTRANSLATABLE_CHARACTER: "22P05",
 } as const;
 
 /** Every error in the `cause` chain, nearest first. Cycle-safe, depth-capped. */
@@ -159,4 +163,27 @@ export function isSlotConflictError(error: unknown): boolean {
 /** A CHECK constraint rejected the row — a bug in our validation, not a race. */
 export function isCheckViolation(error: unknown): boolean {
   return pgErrorCode(error) === SQLSTATE.CHECK_VIOLATION;
+}
+
+/**
+ * The database gave up on a write that did nothing wrong: a deadlock between
+ * two agents' writes meeting inside the exclusion constraint, or a
+ * serialization failure. Nothing was stored, and the correct response is to
+ * try the same write again — never to show the agent "Erreur serveur".
+ */
+export function isTransientWriteError(error: unknown): boolean {
+  const code = pgErrorCode(error);
+  return (
+    code === SQLSTATE.DEADLOCK_DETECTED ||
+    code === SQLSTATE.SERIALIZATION_FAILURE
+  );
+}
+
+/** Text the database cannot store (a NUL byte, or outside the encoding). */
+export function isUnstorableTextError(error: unknown): boolean {
+  const code = pgErrorCode(error);
+  return (
+    code === SQLSTATE.CHARACTER_NOT_IN_REPERTOIRE ||
+    code === SQLSTATE.UNTRANSLATABLE_CHARACTER
+  );
 }

@@ -1,5 +1,4 @@
-import { logout } from "@/app/actions/auth";
-import { Power } from "@/components/icons";
+import { PageHeader } from "@/components/page-header";
 import { ServicesTabs } from "@/components/services-tabs";
 import { Sidebar } from "@/components/sidebar";
 import { requireOwner } from "@/lib/auth";
@@ -32,53 +31,15 @@ export default async function ServicesPage() {
   }
 
   return (
-    <div className="flex min-h-dvh flex-col md:flex-row" style={{ background: "var(--paper)" }}>
+    <div className="app-shell">
       <Sidebar role="owner" />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Mobile Header */}
-        <header
-          className="sticky top-0 z-20 border-b md:hidden"
-          style={{
-            borderColor: "var(--line)",
-            background: "color-mix(in srgb, var(--surface) 94%, transparent)",
-            backdropFilter: "blur(8px)",
-          }}
-        >
-          <div className="flex items-center gap-3 px-4 py-3">
-            <a href="/bookings" className="mr-auto" title="L'Atelier Groupe">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="/logo-transparent.webp"
-                alt="L'Atelier Groupe"
-                className="h-7 w-auto max-w-[120px] object-contain"
-              />
-            </a>
-            <form action={logout}>
-              <button
-                type="submit"
-                className="flex h-9 w-9 items-center justify-center rounded-[8px] transition-colors duration-[120ms] hover:bg-[color:var(--surface-sunk)]"
-                style={{ color: "var(--ink-soft)" }}
-                aria-label="Déconnexion"
-              >
-                <Power size={18} />
-              </button>
-            </form>
-          </div>
-        </header>
-
-        <main className="mx-auto w-full max-w-[1180px] flex-1 px-4 py-6 md:px-6 lg:px-8 lg:py-8">
-          <div className="mb-6">
-            <span className="t-micro uppercase tracking-wider" style={{ color: "var(--accent)" }}>
-              Prestations & Tarifs
-            </span>
-            <h1 className="t-display mt-1 text-[26px]">Catalogue des Services</h1>
-            <p className="t-small mt-1" style={{ color: "var(--ink-soft)" }}>
-              Liste complète des services par salon. Cliquez sur n'importe quelle cellule pour modifier
-              le nom, la durée ou le prix — la sauvegarde est instantanée et synchronisée.
-            </p>
-          </div>
-
+        <main className="page-main">
+          <PageHeader
+            title="Services et tarifs"
+            description="Le catalogue de chaque salon, tel que le personnel le voit en réservant. Touchez un nom, une durée ou un prix pour le modifier : c'est enregistré aussitôt."
+          />
           <ServicesTabs data={data} />
         </main>
       </div>

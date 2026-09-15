@@ -150,6 +150,18 @@ export function slotsForSalon(salon: {
   return slots;
 }
 
+/**
+ * Whether a slot is over, as of `nowMin` on the same day.
+ *
+ * A slot is past only once it has *ended*: at 14:10 the 14:00 slot is still
+ * running and can take a walk-in. The grids, the booking sheet and the server
+ * all decide with this one function — when the server used its own stricter
+ * rule, the grid offered 14:00 at 14:10 and the booking then bounced.
+ */
+export function isSlotOver(startMin: number, slotMin: number, nowMin: number): boolean {
+  return startMin + slotMin <= nowMin;
+}
+
 /** Half-open interval overlap: [aStart, aEnd) vs [bStart, bEnd). */
 export function rangesOverlap(
   aStart: number,
@@ -219,8 +231,21 @@ export function addMonths(dateStr: string, months: number): string {
     .slice(0, 10);
 }
 
+/** 0 for Monday through 6 for Sunday: French calendars start on Monday. */
+export function weekdayIndex(dateStr: string): number {
+  if (!isValidDateString(dateStr)) return 0;
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
+}
+
+/** The seven dates, Monday to Sunday, of the week a date falls in. */
+export function weekDates(dateStr: string): string[] {
+  const offset = weekdayIndex(dateStr);
+  return Array.from({ length: 7 }, (_, i) => addDays(dateStr, i - offset));
+}
+
 /**
- * The full set of weeks (Sunday first) covering the month a date falls in —
+ * The full set of weeks (Monday first) covering the month a date falls in —
  * 35 or 42 cells, always a whole number of 7-day rows, with the leading and
  * trailing days from adjacent months included so the grid has no gaps.
  */
@@ -229,7 +254,7 @@ export function monthMatrix(
 ): { date: string; inMonth: boolean }[] {
   if (!isValidDateString(dateStr)) return [];
   const [y, m] = dateStr.split("-").map(Number);
-  const firstWeekday = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
+  const firstWeekday = weekdayIndex(`${y}-${String(m).padStart(2, "0")}-01`);
   const daysInThisMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const totalCells = firstWeekday + daysInThisMonth <= 35 ? 35 : 42;
 
@@ -257,6 +282,60 @@ export function formatMonthYear(
     timeZone: "UTC",
   }).format(dt);
   return { month, year: String(y) };
+}
+
+function utcDate(dateStr: string): Date {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
+
+const DAY_TITLE_FMT = new Intl.DateTimeFormat("fr-FR", {
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+  timeZone: "UTC",
+});
+const DAY_SHORT_FMT = new Intl.DateTimeFormat("fr-FR", {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  timeZone: "UTC",
+});
+const DAY_MONTH_FMT = new Intl.DateTimeFormat("fr-FR", {
+  day: "numeric",
+  month: "long",
+  timeZone: "UTC",
+});
+
+/** "mardi 15 septembre", with the year only when it is not `today`'s. */
+export function formatDayTitle(dateStr: string, today: string): string {
+  if (!isValidDateString(dateStr)) return String(dateStr ?? "");
+  const title = DAY_TITLE_FMT.format(utcDate(dateStr));
+  return dateStr.slice(0, 4) === String(today).slice(0, 4) ? title : `${title} ${dateStr.slice(0, 4)}`;
+}
+
+/** "mar. 15 sept." */
+export function formatShortDate(dateStr: string): string {
+  if (!isValidDateString(dateStr)) return String(dateStr ?? "");
+  return DAY_SHORT_FMT.format(utcDate(dateStr));
+}
+
+/** "14 au 20 septembre", "28 septembre au 4 octobre". */
+export function formatDateRange(from: string, to: string): string {
+  if (!isValidDateString(from) || !isValidDateString(to)) return `${from} ${to}`;
+  const sameMonth = from.slice(0, 7) === to.slice(0, 7);
+  const start = sameMonth ? String(Number(from.slice(8))) : DAY_MONTH_FMT.format(utcDate(from));
+  return `${start} au ${DAY_MONTH_FMT.format(utcDate(to))}`;
+}
+
+/** "Aujourd'hui", "Demain", "Hier", or null. */
+export function relativeDayLabel(dateStr: string, today: string): string | null {
+  const delta = daysBetween(today, dateStr);
+  if (!isValidDateString(dateStr) || !isValidDateString(today)) return null;
+  if (delta === 0) return "Aujourd'hui";
+  if (delta === 1) return "Demain";
+  if (delta === -1) return "Hier";
+  return null;
 }
 
 export function formatLongDate(dateStr: string, locale = "fr-FR"): string {
