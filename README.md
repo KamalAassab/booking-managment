@@ -286,6 +286,31 @@ current one.
 
 Change both passwords from the owner screen once you are signed in.
 
+### Locked out — resetting a password you don't know
+
+The owner screen changes a password only if you can supply the current one,
+and neither the seed nor `docs/neon-setup.sql` overwrites an account that
+already exists. So a password that was never written down, or a fresh deploy
+where the seed ran with no `SEED_OWNER_PASSWORD` set (it prints a random one
+once, to logs you may not have kept), leaves you signed out with no way back
+in through the app. `/login` says only "Mot de passe incorrect." — the
+database is fine; the password just isn't the one you're typing.
+
+To set a known one:
+
+```
+npm run db:reset-password -- owner 'the-new-password'
+```
+
+This connects to nothing. It hashes the password locally and prints a single
+`INSERT ... ON CONFLICT DO UPDATE`. Paste that into the Neon console's **SQL
+Editor** and Run — a browser is all it needs, so it works from a phone — and
+the account can sign in with the new password immediately. The upsert also
+creates the row if the account was never seeded at all. Use `staff` in place
+of `owner` for the shared staff password. Existing sessions stay signed in,
+so change it again from the owner screen afterwards if you'd rather not have
+the password sitting in your shell history.
+
 ### The normal route
 
 1. Import the repository, framework preset **Next.js**.
