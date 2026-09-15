@@ -52,7 +52,14 @@ function describeInfrastructureError(error: unknown): string | null {
     );
   }
   if (isConnectionError(error)) {
-    return "Base de données injoignable. Réessayez dans un instant.";
+    // The pointer matters: the login screen is where a broken deployment is
+    // discovered, and /api/health is the one page that says *why* the
+    // database is out of reach — wrong host, rejected credentials, or Neon
+    // itself being down.
+    return (
+      "Base de données injoignable. Réessayez dans un instant — " +
+      "si cela persiste, ouvrez /api/health pour le détail."
+    );
   }
   return null;
 }

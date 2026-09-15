@@ -36,19 +36,46 @@ export const SQLSTATE = {
   UNTRANSLATABLE_CHARACTER: "22P05",
 } as const;
 
-/** Every error in the `cause` chain, nearest first. Cycle-safe, depth-capped. */
+/**
+ * Every error reachable from this one, nearest first. Cycle-safe, capped.
+ *
+ * Three links, not one, because the drivers do not agree on where they put
+ * the error they wrapped:
+ *
+ *  - `cause` is what Drizzle uses for the driver error, and what Node uses
+ *    for a rethrow.
+ *  - `sourceError` is where @neondatabase/serverless puts the failure that
+ *    stopped a query reaching Neon at all. It is *not* `cause`, so a walk
+ *    that only followed `cause` saw a NeonDbError with no SQLSTATE and no
+ *    system code and concluded the query had simply failed — which is how a
+ *    deployment that could not reach its database ended up reporting
+ *    "Erreur serveur" instead of "Base de données injoignable".
+ *  - `errors` is undici's: a failed `fetch` throws "fetch failed" whose cause
+ *    is an AggregateError holding one ECONNREFUSED/ENOTFOUND per address
+ *    that was tried. The system code lives only in there.
+ */
 function causeChain(error: unknown): unknown[] {
   const chain: unknown[] = [];
   const seen = new Set<unknown>();
-  let current = error;
-  // A malformed error object could in principle point at itself; the Set and
-  // the depth cap mean a bad error can never hang a request.
-  for (let depth = 0; current != null && depth < 10; depth += 1) {
-    if (seen.has(current)) break;
+  // Breadth-first so "nearest first" still holds once the walk branches. The
+  // Set and the cap mean a self-referential error can never hang a request.
+  const queue: unknown[] = [error];
+
+  while (queue.length > 0 && chain.length < 24) {
+    const current = queue.shift();
+    if (current == null || seen.has(current)) continue;
     seen.add(current);
     chain.push(current);
-    current = (current as { cause?: unknown }).cause;
+
+    const link = current as {
+      cause?: unknown;
+      sourceError?: unknown;
+      errors?: unknown;
+    };
+    queue.push(link.cause, link.sourceError);
+    if (Array.isArray(link.errors)) queue.push(...link.errors);
   }
+
   return chain;
 }
 
@@ -97,6 +124,60 @@ export function systemErrorCode(error: unknown): string | undefined {
 }
 
 /**
+ * undici's own failure codes, which do not follow the `E...` convention and
+ * so are invisible to `systemErrorCode`. They are what a Vercel function sees
+ * when the request to Neon times out while connecting or mid-body.
+ */
+function undiciErrorCode(error: unknown): string | undefined {
+  for (const link of causeChain(error)) {
+    const code = (link as { code?: unknown }).code;
+    if (typeof code === "string" && code.startsWith("UND_ERR")) return code;
+  }
+  return undefined;
+}
+
+/**
+ * The HTTP status Neon's SQL endpoint answered with, when it answered but
+ * not with a result.
+ *
+ * The driver turns a 400 into a real PostgresError carrying the SQLSTATE, so
+ * a status only ever surfaces here for the failures that are *not* the
+ * database disagreeing with the query: 401/403 (the credentials in the
+ * connection string were rejected), 404 (no such endpoint — usually a
+ * DATABASE_URL pointing at a deleted or mistyped Neon project), 429 (over
+ * quota) and 5xx (Neon, or something between us and Neon, is down). None of
+ * those carry a SQLSTATE, which is why they used to be indistinguishable
+ * from an application bug.
+ */
+export function neonHttpStatus(error: unknown): number | undefined {
+  for (const link of causeChain(error)) {
+    const message = (link as { message?: unknown }).message;
+    if (typeof message !== "string") continue;
+    const match = /^Server error \(HTTP status (\d{3})\)/.exec(message);
+    if (match) return Number(match[1]);
+  }
+  return undefined;
+}
+
+/**
+ * The query never reached Postgres: the HTTP request to Neon could not be
+ * made at all. The driver's own wording, which it uses for every fetch-level
+ * failure — DNS, TLS, a refused or reset connection, a blocked egress route.
+ */
+export function isNeonTransportError(error: unknown): boolean {
+  for (const link of causeChain(error)) {
+    const message = (link as { message?: unknown }).message;
+    if (
+      typeof message === "string" &&
+      message.startsWith("Error connecting to database:")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * The migration has not been applied to this database. Distinguished from a
  * genuine crash so the app can show "run npm run db:migrate" instead of a
  * blank 500 — this is the state a freshly deployed Vercel project is in
@@ -119,12 +200,25 @@ export function isConnectionError(error: unknown): boolean {
     sys === "ENOTFOUND" ||
     sys === "ETIMEDOUT" ||
     sys === "ECONNRESET" ||
+    sys === "ECONNABORTED" ||
     sys === "EAI_AGAIN" ||
     sys === "EHOSTUNREACH" ||
-    sys === "ENETUNREACH"
+    sys === "ENETUNREACH" ||
+    sys === "EPROTO"
   ) {
     return true;
   }
+
+  // Everything below this line is the Neon HTTP driver, whose failures carry
+  // no SQLSTATE and no system code of their own. Without these three checks
+  // an unreachable production database reaches the front desk as a blank
+  // "Erreur serveur", and /api/health — the page the README sends you to
+  // when a deploy misbehaves — reports "Query failed" for a query that never
+  // ran.
+  if (undiciErrorCode(error) !== undefined) return true;
+  if (isNeonTransportError(error)) return true;
+  if (neonHttpStatus(error) !== undefined) return true;
+
   const code = pgErrorCode(error);
   if (!code) return false;
   return (

@@ -4,7 +4,9 @@ import {
   isCheckViolation,
   isConnectionError,
   isMissingSchemaError,
+  isNeonTransportError,
   isSlotConflictError,
+  neonHttpStatus,
   pgConstraintName,
   pgErrorCode,
   pgErrorMessage,
@@ -259,5 +261,142 @@ describe("isCheckViolation", () => {
 
   it("does not fire on a slot conflict", () => {
     expect(isCheckViolation(drizzleUniqueViolation())).toBe(false);
+  });
+});
+
+/**
+ * What a deployment actually sees when it cannot reach its Neon database.
+ *
+ * These three shapes are copied from errors thrown by @neondatabase/serverless
+ * 1.1.0 through drizzle-orm/neon-http, not invented — the first was produced
+ * by pointing src/db at a Neon host this machine is not allowed to reach.
+ *
+ * None of them carries a SQLSTATE, and none of them puts anything on `cause`
+ * below the NeonDbError. A classifier that only read `code` off the `cause`
+ * chain therefore called every one of them an ordinary query failure, so a
+ * production database that was unreachable, deleted, or refusing the
+ * credentials reached the salon as "Erreur serveur. Réessayez." and reached
+ * /api/health — the page the README sends you to — as "Query failed".
+ */
+
+/** Neon's SQL endpoint answered, but with a status rather than a result. */
+function neonHttpStatusError(status: number, body: string) {
+  const neonError = Object.assign(
+    new Error(`Server error (HTTP status ${status}): ${body}`),
+    { name: "NeonDbError", code: undefined, sourceError: undefined },
+  );
+  return Object.assign(new Error("Failed query: select 1\nparams: "), {
+    name: "DrizzleQueryError",
+    cause: neonError,
+  });
+}
+
+/** The request never left: DNS, TLS or a refused connection. */
+function neonFetchFailure() {
+  const system = Object.assign(new Error("connect ECONNREFUSED 10.0.0.1:443"), {
+    code: "ECONNREFUSED",
+  });
+  // undici reports one error per address it tried, inside an AggregateError
+  // hung off the TypeError's cause.
+  const aggregate = Object.assign(new AggregateError([system], ""), {
+    code: "ECONNREFUSED",
+  });
+  const fetchFailed = Object.assign(new TypeError("fetch failed"), {
+    cause: aggregate,
+  });
+  // The driver hangs the original on `sourceError`, never on `cause`.
+  const neonError = Object.assign(
+    new Error("Error connecting to database: TypeError: fetch failed"),
+    { name: "NeonDbError", code: undefined, sourceError: fetchFailed },
+  );
+  return Object.assign(new Error("Failed query: select 1"), {
+    name: "DrizzleQueryError",
+    cause: neonError,
+  });
+}
+
+/** The connection to Neon timed out; undici's code has no `E` prefix. */
+function neonConnectTimeout() {
+  const timeout = Object.assign(new Error("Connect Timeout Error"), {
+    code: "UND_ERR_CONNECT_TIMEOUT",
+  });
+  const neonError = Object.assign(
+    new Error("Error connecting to database: TypeError: fetch failed"),
+    {
+      name: "NeonDbError",
+      sourceError: Object.assign(new TypeError("fetch failed"), {
+        cause: timeout,
+      }),
+    },
+  );
+  return Object.assign(new Error("Failed query: select 1"), {
+    name: "DrizzleQueryError",
+    cause: neonError,
+  });
+}
+
+describe("Neon HTTP failures", () => {
+  it("reads the status out of an endpoint that answered with one", () => {
+    expect(neonHttpStatus(neonHttpStatusError(404, "endpoint not found"))).toBe(404);
+    expect(neonHttpStatus(neonHttpStatusError(503, "upstream unavailable"))).toBe(
+      503,
+    );
+  });
+
+  it("has no status for a request that never got an answer", () => {
+    expect(neonHttpStatus(neonFetchFailure())).toBeUndefined();
+    expect(neonHttpStatus(drizzleUniqueViolation())).toBeUndefined();
+  });
+
+  it("recognises the driver's own wording for a failed request", () => {
+    expect(isNeonTransportError(neonFetchFailure())).toBe(true);
+    expect(isNeonTransportError(neonConnectTimeout())).toBe(true);
+    expect(isNeonTransportError(neonHttpStatusError(500, "boom"))).toBe(false);
+    expect(isNeonTransportError(drizzleUniqueViolation())).toBe(false);
+  });
+
+  it.each([401, 403, 404, 429, 500, 502, 503, 504])(
+    "calls an endpoint answering HTTP %i unreachable, not a broken query",
+    (status) => {
+      expect(isConnectionError(neonHttpStatusError(status, "x"))).toBe(true);
+    },
+  );
+
+  it("calls a request that never reached Neon unreachable", () => {
+    expect(isConnectionError(neonFetchFailure())).toBe(true);
+    expect(isConnectionError(neonConnectTimeout())).toBe(true);
+  });
+
+  it("finds the system code undici buried two links down", () => {
+    // The walk has to cross `sourceError`, then `cause`, then the
+    // AggregateError's `errors` array to reach it.
+    expect(systemErrorCode(neonFetchFailure())).toBe("ECONNREFUSED");
+  });
+
+  it("does not mistake any of them for a missing schema or a slot conflict", () => {
+    for (const error of [
+      neonFetchFailure(),
+      neonConnectTimeout(),
+      neonHttpStatusError(502, "bad gateway"),
+    ]) {
+      expect(isMissingSchemaError(error)).toBe(false);
+      expect(isSlotConflictError(error)).toBe(false);
+      expect(pgErrorCode(error)).toBeUndefined();
+    }
+  });
+
+  it("still lets a real Postgres error through unchanged", () => {
+    // Neon returns a 400 for these, and the driver rebuilds the PostgresError
+    // from the body — so the SQLSTATE is present and nothing above changes.
+    const missingTable = Object.assign(new Error('relation "users" does not exist'), {
+      name: "NeonDbError",
+      code: "42P01",
+    });
+    const wrapped = Object.assign(new Error("Failed query: select ..."), {
+      name: "DrizzleQueryError",
+      cause: missingTable,
+    });
+    expect(isMissingSchemaError(wrapped)).toBe(true);
+    expect(isConnectionError(wrapped)).toBe(false);
   });
 });

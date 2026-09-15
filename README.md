@@ -291,12 +291,23 @@ Change both passwords from the owner screen once you are signed in.
 1. Import the repository, framework preset **Next.js**.
 2. Environment variables: `DATABASE_URL` (Neon pooled connection string) and
    `SESSION_SECRET` (a fresh 32-byte random value — not the development one).
+   Paste the **value only**. A `.env` file is read by dotenv, which strips the
+   quotes around a value; Vercel's dashboard stores exactly what was pasted,
+   so the line copied out of `.env.example` arrives with its apostrophes
+   still attached. The app now trims them and says so on `/api/health`, but
+   they should not be there.
 3. Run `npm run db:migrate` and `npm run db:seed` once against the production
    database.
 4. Open `/api/health`. It reports whether the environment variables, the
    database connection, each table and the double-booking constraint are all
    in place, and names the command to run for whatever is missing. Do this
    before handing the URL to anyone.
+
+   When the database is the problem it says which kind: an endpoint that
+   answered with an HTTP status (rejected credentials, a deleted project, a
+   Neon outage) reads differently from a request that never arrived, and
+   neither is reported as a failed query. It never prints the connection
+   string, and the host it shows has the project's own segment masked.
 5. Keep preview deployments on, so every change is seen working before it
    reaches the salons.
 

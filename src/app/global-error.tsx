@@ -9,10 +9,11 @@
 
 export default function GlobalError({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  /** Next 16's `retry` — see app/error.tsx. `reset` would not re-fetch. */
+  retry: () => void;
 }) {
   return (
     <html lang="fr">
@@ -53,7 +54,7 @@ export default function GlobalError({
           <div style={{ marginTop: "1.5rem", display: "flex", gap: "0.5rem" }}>
             <button
               type="button"
-              onClick={reset}
+              onClick={() => retry()}
               style={{
                 background: "#c8a24a",
                 color: "#12161d",

@@ -1,8 +1,15 @@
 import { sql } from "drizzle-orm";
 
-import { ConfigError, db, driverFor } from "@/db";
+import { ConfigError, db, inspectConnection } from "@/db";
 import { jsonNoStore } from "@/lib/api";
-import { isConnectionError, isMissingSchemaError, pgErrorCode } from "@/lib/db-errors";
+import {
+  isConnectionError,
+  isMissingSchemaError,
+  isNeonTransportError,
+  neonHttpStatus,
+  pgErrorCode,
+  systemErrorCode,
+} from "@/lib/db-errors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,11 +40,59 @@ type Check = {
 
 const TABLES = ["users", "salons", "bookings"] as const;
 
+/**
+ * Why a query failed, in terms of the thing that has to change.
+ *
+ * "Unreachable, or the credentials were rejected" was true but not useful:
+ * the two have different fixes, and the Neon HTTP driver already knows which
+ * one happened. Worse, a driver failure that carried no SQLSTATE — every
+ * network-level one — fell through to "Query failed", telling the reader the
+ * database had run their query and disliked it, when in fact nothing had
+ * reached it. This reports the distinction the driver actually made.
+ */
+function describeDatabaseFailure(error: unknown): string {
+  const status = neonHttpStatus(error);
+  if (status !== undefined) {
+    const meaning =
+      status === 401 || status === 403
+        ? "the credentials in DATABASE_URL were rejected, or a network policy between this deployment and Neon refused the request"
+        : status === 404
+          ? "there is no such Neon endpoint — DATABASE_URL points at a project that was deleted, or its host is mistyped"
+          : status === 429
+            ? "the Neon project is over its quota"
+            : status >= 500
+              ? "Neon, or something between this deployment and Neon, is failing"
+              : "Neon refused the request";
+    return `Unreachable: Neon's SQL endpoint answered HTTP ${status} — ${meaning}.`;
+  }
+
+  if (isNeonTransportError(error)) {
+    const sys = systemErrorCode(error);
+    return (
+      `Unreachable: the request to Neon could not be made at all${sys ? ` (${sys})` : ""}. ` +
+      "Check the host in DATABASE_URL, and that the Neon project is not deleted or suspended."
+    );
+  }
+
+  const code = pgErrorCode(error);
+  if (isConnectionError(error)) {
+    if (code === "28P01" || code === "28000") {
+      return "Unreachable: the credentials in DATABASE_URL were rejected.";
+    }
+    if (code === "3D000") {
+      return "Unreachable: the database named at the end of DATABASE_URL does not exist.";
+    }
+    const sys = systemErrorCode(error);
+    return `Unreachable${sys ? ` (${sys})` : code ? ` (SQLSTATE ${code})` : ""}.`;
+  }
+
+  return `Query failed${code ? ` (SQLSTATE ${code})` : ""}.`;
+}
+
 async function checkDatabase(): Promise<Check[]> {
   const checks: Check[] = [];
 
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
+  if (!process.env.DATABASE_URL?.trim()) {
     return [
       {
         name: "DATABASE_URL",
@@ -48,12 +103,9 @@ async function checkDatabase(): Promise<Check[]> {
     ];
   }
 
+  let connection: ReturnType<typeof inspectConnection>;
   try {
-    checks.push({
-      name: "DATABASE_URL",
-      state: "ok",
-      detail: `Set; using the ${driverFor(connectionString)} driver.`,
-    });
+    connection = inspectConnection();
   } catch (error) {
     return [
       {
@@ -61,11 +113,23 @@ async function checkDatabase(): Promise<Check[]> {
         state: "fail",
         detail:
           error instanceof ConfigError
-            ? error.hint
+            ? `${error.message} ${error.hint}`
             : "Not a valid connection string.",
       },
     ];
   }
+
+  checks.push({
+    name: "DATABASE_URL",
+    // A value that had to be cleaned up before it parsed still works, but it
+    // is one edit away from breaking in a way that looks like an outage, so
+    // it is never reported as simply fine.
+    state: connection.notes.length > 0 ? "warn" : "ok",
+    detail: [
+      `Set; ${connection.driver} driver, ${connection.pooled ? "pooled" : "direct"} host ${connection.host}.`,
+      ...connection.notes.map((note) => `Accepted, but ${note}`),
+    ].join(" "),
+  });
 
   try {
     await db.execute(sql`select 1`);
@@ -74,9 +138,7 @@ async function checkDatabase(): Promise<Check[]> {
     checks.push({
       name: "database",
       state: "fail",
-      detail: isConnectionError(error)
-        ? "Unreachable, or the credentials were rejected."
-        : `Query failed${pgErrorCode(error) ? ` (SQLSTATE ${pgErrorCode(error)})` : ""}.`,
+      detail: describeDatabaseFailure(error),
     });
     return checks;
   }

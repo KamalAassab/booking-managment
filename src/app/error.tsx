@@ -14,10 +14,17 @@ import { useEffect } from "react";
 
 export default function ErrorBoundary({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  /**
+   * Next 16's replacement for `reset`, stable since 16.3. `reset` only clears
+   * the boundary and re-renders the children it already has, so a page that
+   * failed because the database was briefly out of reach came straight back
+   * with the same failure. `retry` re-fetches on the server first, which is
+   * the only thing that can actually recover from it.
+   */
+  retry: () => void;
 }) {
   useEffect(() => {
     console.error("unhandled render error", error);
@@ -35,7 +42,7 @@ export default function ErrorBoundary({
         </p>
 
         <div className="mt-6 flex flex-wrap gap-2">
-          <button type="button" onClick={reset} className="btn-primary">
+          <button type="button" onClick={() => retry()} className="btn-primary">
             Réessayer
           </button>
           <a href="/bookings" className="btn-quiet">
