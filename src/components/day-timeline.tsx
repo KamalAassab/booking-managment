@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffectEvent, useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { TimelineBooking } from "@/components/booking-card";
+import { CompactBooking, TimelineBooking } from "@/components/booking-card";
 import { Plus } from "@/components/icons";
 import { bookingPhase, layoutDay, timelineBounds } from "@/lib/day-layout";
 import type { ServiceCatalogEntry } from "@/lib/services-catalog";
@@ -20,6 +20,11 @@ type Props = {
   /** Ids matching the search box, or null when nothing is searched. */
   matches: Set<string> | null;
   loading: boolean;
+  /** A create/edit sheet is open elsewhere on the board: any overflow badge
+   *  popover here must close rather than sit open behind it — a popover left
+   *  open is a mistake this component owns, not something z-index should
+   *  have to paper over. */
+  sheetOpen: boolean;
   onSelectSlot: (startMin: number) => void;
   onSelectBooking: (booking: BookingDTO) => void;
 };
@@ -29,8 +34,14 @@ const RAIL_PX = 60;
 /** Right-hand strip that always leaves every row reachable, even when all
  *  lanes at that time are full: a different service can still start there. */
 const GUTTER_PX = 44;
-/** Narrowest lane before the canvas scrolls sideways instead of squeezing. */
-const LANE_MIN_PX = 132;
+/** Narrowest lane before the canvas scrolls sideways instead of squeezing.
+ *  Wide enough that a name and its service both fit on one line without
+ *  turning to soup. */
+const LANE_MIN_PX = 172;
+/** Columns a single instant may ever show side by side. A cluster busier than
+ *  this collapses the rest into a "+N" badge rather than lanes too thin to
+ *  read — four wide cards beat eleven slivers. */
+const LANE_CAP = 4;
 /** Room above the first hour line and below the last, for their labels. */
 const PAD_Y = 12;
 
@@ -54,6 +65,7 @@ export function DayTimeline({
   catalog,
   matches,
   loading,
+  sheetOpen,
   onSelectSlot,
   onSelectBooking,
 }: Props) {
@@ -61,8 +73,13 @@ export function DayTimeline({
   const rowPx = rowHeightFor(slotMin);
   const pxPerMin = rowPx / slotMin;
 
-  const { items, maxLanes } = useMemo(() => layoutDay(bookings, slotMin), [bookings, slotMin]);
+  const { items, overflow, maxLanes } = useMemo(
+    () => layoutDay(bookings, slotMin, LANE_CAP),
+    [bookings, slotMin],
+  );
   const bounds = useMemo(() => timelineBounds(salon, bookings), [salon, bookings]);
+  const [openOverflow, setOpenOverflow] = useState<number | null>(null);
+  const popRef = useRef<HTMLDivElement>(null);
   const rows = useMemo(() => {
     const out: number[] = [];
     for (let t = bounds.startMin; t < bounds.endMin; t += slotMin) out.push(t);
@@ -90,6 +107,28 @@ export function DayTimeline({
   useLayoutEffect(() => {
     focusDay();
   }, [salon.slug, date, loading]);
+
+  useLayoutEffect(() => {
+    setOpenOverflow(null);
+  }, [salon.slug, date, sheetOpen]);
+
+  useEffect(() => {
+    if (openOverflow === null) return;
+    function handlePointer(event: MouseEvent) {
+      if (popRef.current && !popRef.current.contains(event.target as Node)) {
+        setOpenOverflow(null);
+      }
+    }
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpenOverflow(null);
+    }
+    document.addEventListener("mousedown", handlePointer);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handlePointer);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [openOverflow]);
 
   if (rows.length === 0) {
     return (
@@ -176,6 +215,58 @@ export function DayTimeline({
                       nowMin={nowMin}
                       onSelect={() => onSelectBooking(item.booking)}
                     />
+                  </div>
+                );
+              })}
+
+              {overflow.map((group, index) => {
+                const isOpen = openOverflow === index;
+                const badgeHeight = Math.max(22, Math.min(30, (group.bottom - group.top) * pxPerMin - 3));
+                const label = `${group.bookings.length} rendez-vous supplémentaires entre ${minutesToLabel(group.top)} et ${minutesToLabel(group.bottom)}`;
+                return (
+                  <div
+                    key={`${group.top}-${group.bottom}-${index}`}
+                    className="pointer-events-auto"
+                    style={{ position: "absolute", top: y(group.top) + 1, right: 0 }}
+                  >
+                    <button
+                      type="button"
+                      className="tl-overflow"
+                      data-open={isOpen || undefined}
+                      style={{ height: badgeHeight, padding: "0 8px" }}
+                      onClick={() => setOpenOverflow(isOpen ? null : index)}
+                      aria-expanded={isOpen}
+                      aria-label={label}
+                      title={label}
+                    >
+                      +{group.bookings.length}
+                    </button>
+                    {isOpen ? (
+                      <div
+                        ref={popRef}
+                        className="popover tl-overflow-pop"
+                        style={{ top: badgeHeight + 4, right: 0 }}
+                      >
+                        <p className="t-small px-2 py-1.5" style={{ color: "var(--ink-faint)" }} data-nums>
+                          {minutesToLabel(group.top)} – {minutesToLabel(group.bottom)} · {group.bookings.length} de plus
+                        </p>
+                        {[...group.bookings]
+                          .sort((a, b) => a.startMin - b.startMin)
+                          .map((booking) => (
+                            <CompactBooking
+                              key={booking.id}
+                              booking={booking}
+                              phase={bookingPhase(booking, today, nowMin)}
+                              nowMin={nowMin}
+                              detail="end"
+                              onSelect={() => {
+                                setOpenOverflow(null);
+                                onSelectBooking(booking);
+                              }}
+                            />
+                          ))}
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}

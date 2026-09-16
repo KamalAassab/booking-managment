@@ -30,11 +30,32 @@ export type LaidOutBooking<T extends TimedBooking> = {
   bottom: number;
 };
 
+/**
+ * Bookings that lost their seat when a cluster ran past `laneCap`, bundled by
+ * the stretch of time they share so the timeline can draw one "+N" badge per
+ * pocket of overflow instead of one per booking.
+ */
+export type OverflowGroup<T extends TimedBooking> = {
+  top: number;
+  bottom: number;
+  bookings: T[];
+};
+
+/**
+ * `laneCap` bounds how many columns a single instant can ever demand. Beyond
+ * it, a booking still occupies its true lane for the packing math (so later
+ * bookings keep finding real gaps), but it renders as overflow rather than as
+ * a lane so thin its own name cannot fit — four wide, readable columns beat
+ * eleven that are each a sliver. Uncapped by default: tests and any caller
+ * that wants true concurrency get the old, exact behaviour.
+ */
 export function layoutDay<T extends TimedBooking>(
   bookings: readonly T[],
   slotMin: number,
-): { items: LaidOutBooking<T>[]; maxLanes: number } {
+  laneCap: number = Infinity,
+): { items: LaidOutBooking<T>[]; overflow: OverflowGroup<T>[]; maxLanes: number } {
   const minSpan = Math.max(1, slotMin);
+  const cap = Math.max(1, laneCap);
   const sorted = [...bookings].sort(
     (a, b) =>
       a.startMin - b.startMin ||
@@ -43,6 +64,7 @@ export function layoutDay<T extends TimedBooking>(
   );
 
   const items: LaidOutBooking<T>[] = [];
+  const overflow: OverflowGroup<T>[] = [];
   let maxLanes = 0;
   let cluster: LaidOutBooking<T>[] = [];
   let laneEnds: number[] = [];
@@ -50,15 +72,20 @@ export function layoutDay<T extends TimedBooking>(
 
   const closeCluster = () => {
     if (cluster.length === 0) return;
-    const lanes = laneEnds.length;
+    const realLanes = laneEnds.length;
+    const lanes = Math.min(realLanes, cap);
     maxLanes = Math.max(maxLanes, lanes);
-    for (const item of cluster) {
+
+    const visible = cluster.filter((item) => item.lane < lanes);
+    const hidden = cluster.filter((item) => item.lane >= lanes);
+
+    for (const item of visible) {
       item.lanes = lanes;
-      // Widen into every following lane that is free for this booking's
-      // whole visual interval.
+      // Widen into every following visible lane that is free for this
+      // booking's whole visual interval.
       let span = 1;
       for (let lane = item.lane + 1; lane < lanes; lane += 1) {
-        const blocked = cluster.some(
+        const blocked = visible.some(
           (other) =>
             other.lane === lane && other.top < item.bottom && item.top < other.bottom,
         );
@@ -67,7 +94,31 @@ export function layoutDay<T extends TimedBooking>(
       }
       item.span = span;
     }
-    items.push(...cluster);
+    items.push(...visible);
+
+    // Hidden bookings, bundled into as few badges as the overlaps allow: two
+    // that never run at the same time share one badge rather than stacking
+    // two "+1"s.
+    const sortedHidden = [...hidden].sort((a, b) => a.top - b.top);
+    let group: LaidOutBooking<T>[] = [];
+    let groupEnd = -Infinity;
+    const flushGroup = () => {
+      if (group.length === 0) return;
+      overflow.push({
+        top: Math.min(...group.map((g) => g.top)),
+        bottom: Math.max(...group.map((g) => g.bottom)),
+        bookings: group.map((g) => g.booking),
+      });
+      group = [];
+      groupEnd = -Infinity;
+    };
+    for (const h of sortedHidden) {
+      if (h.top >= groupEnd) flushGroup();
+      group.push(h);
+      groupEnd = Math.max(groupEnd, h.bottom);
+    }
+    flushGroup();
+
     cluster = [];
     laneEnds = [];
   };
@@ -91,7 +142,7 @@ export function layoutDay<T extends TimedBooking>(
   }
   closeCluster();
 
-  return { items, maxLanes };
+  return { items, overflow, maxLanes };
 }
 
 type SalonHours = { opensAtMin: number; closesAtMin: number; slotMin: number };

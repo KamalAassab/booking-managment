@@ -43,6 +43,13 @@
       "when": 1788826000000,
       "tag": "0005_service_case_insensitive",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789590358261,
+      "tag": "0006_mighty_blink",
+      "breakpoints": true
     }
   ]
 }

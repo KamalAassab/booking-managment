@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 
 import type { DialogState } from "@/components/bookings-board";
 import { ClientCombobox } from "@/components/client-combobox";
-import { Check, Close, RotateCcw, WhatsApp } from "@/components/icons";
+import { Calendar as CalendarIcon, Check, Close, RotateCcw, WhatsApp } from "@/components/icons";
+import { Calendar } from "@/components/ui/calendar";
 import { SelectDropdown } from "@/components/ui/select";
 import type { ToastMessage } from "@/components/toast";
 import { formatDuration, slotAvailability, type SlotAvailability } from "@/lib/day-layout";
@@ -16,8 +17,11 @@ import {
   type ServiceCatalogEntry,
 } from "@/lib/services-catalog";
 import {
+  addDays,
   conflictsWithExisting,
   formatDayTitle,
+  formatShortDate,
+  isValidDateString,
   minutesToLabel,
   nowMinutesInSalonTz,
   slotsForSalon,
@@ -120,8 +124,45 @@ export function BookingSheet({
   const [busy, setBusy] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
 
+  // A new booking's own date, independent of whatever day the board behind
+  // the sheet has on screen: the "+Nouveau" action defaults it to today
+  // (state.date), a click on a specific slot or day starts it there, and
+  // this field lets the agent move it — to tomorrow, or any date — without
+  // leaving the sheet. Editing never moves a booking's date here.
+  const [bookingDate, setBookingDate] = useState(
+    editing ? editing.bookingDate : state.kind === "create" ? state.date : date,
+  );
+
   const panelRef = useRef<HTMLDivElement>(null);
   const firstFieldRef = useRef<HTMLInputElement>(null);
+
+  // The board's `bookings` prop is only ever the day it currently has on
+  // screen, live-polled every 750ms. When the picked date is that same day,
+  // that feed is the freshest source there is; any other date fetches its
+  // own snapshot once, just to draw a real time grid instead of applying one
+  // day's bookings to another's.
+  const [otherDayBookings, setOtherDayBookings] = useState<BookingDTO[] | null>(null);
+  const needsOwnFetch = bookingDate !== date;
+  useEffect(() => {
+    if (!needsOwnFetch) return;
+    let cancelled = false;
+    setOtherDayBookings(null);
+    fetch(`/api/bookings?salon=${encodeURIComponent(salon.slug)}&date=${encodeURIComponent(bookingDate)}`, {
+      cache: "no-store",
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { bookings?: BookingDTO[] } | null) => {
+        if (!cancelled) setOtherDayBookings(data?.bookings ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setOtherDayBookings([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [needsOwnFetch, bookingDate, salon.slug]);
+  const dayBookings = needsOwnFetch ? (otherDayBookings ?? []) : bookings;
+  const dayBookingsLoading = needsOwnFetch && otherDayBookings === null;
 
   /** A real service pre-fills its standard duration and price; both stay editable. */
   function handleServiceChange(name: string) {
@@ -192,8 +233,8 @@ export function BookingSheet({
     return () => clearTimeout(timer);
   }, [confirmCancel]);
 
-  const nowMin = date === today ? nowMinutesInSalonTz() : null;
-  const isPastDay = date < today;
+  const nowMin = bookingDate === today ? nowMinutesInSalonTz() : null;
+  const isPastDay = bookingDate < today;
   const resolvedService = service === CUSTOM_SERVICE ? customService.trim() : service;
 
   const slots = useMemo(() => {
@@ -214,12 +255,12 @@ export function BookingSheet({
         (s) =>
           conflictsWithExisting(
             { startMin: s, durationMin, service: resolvedService },
-            bookings,
+            dayBookings,
             editing?.id,
           ),
         isPastDay ? 24 * 60 : nowMin,
       ),
-    [salon, slots, durationMin, resolvedService, bookings, editing?.id, isPastDay, nowMin],
+    [salon, slots, durationMin, resolvedService, dayBookings, editing?.id, isPastDay, nowMin],
   );
 
   const selected = availability.find((s) => s.startMin === startMin);
@@ -234,7 +275,11 @@ export function BookingSheet({
   const blocksSubmit =
     (selectedState === "taken" && (timeChanged || serviceChanged)) ||
     (selectedState === "overflow" && timeChanged) ||
-    (!editing && selectedState === "past");
+    (!editing && selectedState === "past") ||
+    // A different day's availability is still on its way: the grid below is
+    // showing every slot as free rather than that day's real state, so the
+    // save waits rather than risk the agent confirming a slot that is taken.
+    (!editing && dayBookingsLoading);
   const nextFree = availability.find((s) => s.state === "free" && s.startMin > startMin)
     ?? availability.find((s) => s.state === "free");
 
@@ -306,7 +351,7 @@ export function BookingSheet({
             salonSlug: salon.slug,
             clientName: clientName.trim(),
             clientPhone: phone.e164,
-            bookingDate: date,
+            bookingDate,
             startMin,
             durationMin,
             service: resolvedService,
@@ -466,7 +511,7 @@ export function BookingSheet({
               {editing ? "Modifier le rendez-vous" : "Nouveau rendez-vous"}
             </h2>
             <p className="t-small truncate first-letter:uppercase" style={{ color: "var(--ink-faint)" }}>
-              {formatDayTitle(date, today)} · {salon.name}
+              {formatDayTitle(bookingDate, today)} · {salon.name}
             </p>
           </div>
           {editing?.status === "done" ? (
@@ -638,14 +683,32 @@ export function BookingSheet({
 
                 {/* ---- When ---- */}
                 <div className="flex flex-col gap-3">
+                  {!editing ? (
+                    <div>
+                      <span className="label" id="date-label">
+                        Date
+                      </span>
+                      <DateField
+                        value={bookingDate}
+                        today={today}
+                        onChange={(value) => {
+                          setBookingDate(value);
+                          setError(null);
+                        }}
+                      />
+                    </div>
+                  ) : null}
+
                   <div className="flex items-baseline justify-between gap-3">
                     <span className="label mb-0" id="time-label">
                       Heure de début
                     </span>
                     <span className="t-small truncate" style={{ color: "var(--ink-faint)" }}>
-                      {resolvedService
-                        ? `Disponibilités pour ${formatDuration(durationMin)}`
-                        : "Choisissez un service pour affiner"}
+                      {dayBookingsLoading
+                        ? "Chargement du jour…"
+                        : resolvedService
+                          ? `Disponibilités pour ${formatDuration(durationMin)}`
+                          : "Choisissez un service pour affiner"}
                     </span>
                   </div>
 
@@ -796,6 +859,140 @@ export function BookingSheet({
             </div>
           </fieldset>
         </form>
+      </div>
+    </div>
+  );
+}
+
+/** Opens the browser's own date picker: instant, native, accessible. */
+function openDatePicker(input: HTMLInputElement | null) {
+  if (!input) return;
+  try {
+    input.showPicker();
+  } catch {
+    input.focus();
+    input.click();
+  }
+}
+
+/**
+ * A new booking's date: today and tomorrow one tap away — the two answers
+ * that cover almost every call — with a native picker for anything else, so
+ * "whenever he wants" never means leaving the sheet to renavigate the board.
+ */
+function DateField({
+  value,
+  today,
+  onChange,
+}: {
+  value: string;
+  today: string;
+  onChange: (date: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const tomorrow = addDays(today, 1);
+  const isOther = value !== today && value !== tomorrow;
+  const otherLabel = isOther ? formatShortDate(value) : "Choisir une date";
+
+  const [open, setOpen] = useState(false);
+  const popRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handlePointer(event: MouseEvent) {
+      if (popRef.current && !popRef.current.contains(event.target as Node)) setOpen(false);
+    }
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", handlePointer);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handlePointer);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [open]);
+
+  return (
+    <div role="radiogroup" aria-labelledby="date-label" className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        role="radio"
+        className="time-chip px-3"
+        aria-checked={value === today}
+        onClick={() => onChange(today)}
+      >
+        Aujourd&apos;hui
+      </button>
+      <button
+        type="button"
+        role="radio"
+        className="time-chip px-3"
+        aria-checked={value === tomorrow}
+        onClick={() => onChange(tomorrow)}
+      >
+        Demain
+      </button>
+
+      {/* Phone: the platform's own picker — a wheel it already knows, never
+          fighting the touch keyboard. */}
+      <span className="relative inline-flex md:hidden">
+        <button
+          type="button"
+          role="radio"
+          className="time-chip flex items-center gap-1.5 px-3"
+          aria-checked={isOther}
+          onClick={() => openDatePicker(inputRef.current)}
+        >
+          <CalendarIcon size={15} />
+          <span data-nums>{otherLabel}</span>
+        </button>
+        <input
+          ref={inputRef}
+          type="date"
+          value={value}
+          min={today}
+          max="2100-12-31"
+          onChange={(e) => {
+            if (isValidDateString(e.target.value)) onChange(e.target.value);
+          }}
+          className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
+          tabIndex={-1}
+          aria-hidden
+        />
+      </span>
+
+      {/* Desktop: a proper calendar, not the OS's plain field-and-popup. */}
+      <div className={`relative hidden md:inline-flex ${open ? "z-[var(--z-popover)]" : ""}`}>
+        <button
+          type="button"
+          role="radio"
+          className="time-chip flex items-center gap-1.5 px-3"
+          aria-checked={isOther}
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          onClick={() => setOpen((o) => !o)}
+        >
+          <CalendarIcon size={15} />
+          <span data-nums>{otherLabel}</span>
+        </button>
+        {open ? (
+          <div
+            ref={popRef}
+            role="dialog"
+            aria-label="Choisir une date"
+            className="popover absolute left-0 top-[calc(100%+6px)]"
+          >
+            <Calendar
+              value={value}
+              today={today}
+              onSelect={(date) => {
+                onChange(date);
+                setOpen(false);
+              }}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   );

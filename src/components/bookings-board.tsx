@@ -53,7 +53,7 @@ type Props = {
 };
 
 export type DialogState =
-  | { kind: "create"; startMin: number }
+  | { kind: "create"; startMin: number; date: string }
   | { kind: "edit"; booking: BookingDTO }
   | null;
 
@@ -682,9 +682,21 @@ export function BookingsBoard({
     [active, matcher],
   );
 
+  // The global "Nouveau rendez-vous" action (header, FAB, the N shortcut) is
+  // not tied to whatever day the board happens to be showing: a call almost
+  // always means today, and the sheet's own date field lets the agent move
+  // it to tomorrow, or any date, without first navigating the board there.
   const openCreate = useCallback(() => {
-    setDialog({ kind: "create", startMin: suggestStart(bookings, date) });
-  }, [suggestStart, bookings, date]);
+    // Bounded to a real slot even late at night, after closing: firstOpenSlotStart
+    // only floors "now" to the grid, so past closing it can land outside the
+    // day entirely. The sheet's own grid still guides the exact pick; this
+    // only has to be a valid starting point.
+    const startMin = Math.min(
+      firstOpenSlotStart(salon, nowMin),
+      salon.closesAtMin - salon.slotMin,
+    );
+    setDialog({ kind: "create", startMin, date: today });
+  }, [salon, nowMin, today]);
 
   const openDay = useCallback(
     (day: string) => {
@@ -703,7 +715,7 @@ export function BookingsBoard({
             bookingsByDate.get(day) ??
             NO_BOOKINGS);
       if (day !== date) navigate(salon.slug, day);
-      setDialog({ kind: "create", startMin: suggestStart(rows, day) });
+      setDialog({ kind: "create", startMin: suggestStart(rows, day), date: day });
     },
     [date, bookings, bookingsByDate, navigate, salon.slug, suggestStart],
   );
@@ -798,7 +810,10 @@ export function BookingsBoard({
   }, [salon.name, view, dayLoading, active, activeCount, date, today, nowMin, monthLoading, bookingsByDate]);
 
   const selectBooking = useCallback((booking: BookingDTO) => setDialog({ kind: "edit", booking }), []);
-  const selectSlot = useCallback((startMin: number) => setDialog({ kind: "create", startMin }), []);
+  const selectSlot = useCallback(
+    (startMin: number) => setDialog({ kind: "create", startMin, date }),
+    [date],
+  );
 
   return (
     <div
@@ -851,6 +866,7 @@ export function BookingsBoard({
                   catalog={catalog}
                   matches={matches}
                   loading={dayLoading}
+                  sheetOpen={dialog !== null}
                   onSelectSlot={selectSlot}
                   onSelectBooking={selectBooking}
                 />
@@ -952,7 +968,7 @@ export function BookingsBoard({
 
       {dialog ? (
         <BookingSheet
-          key={dialog.kind === "edit" ? dialog.booking.id : `create:${date}:${dialog.startMin}`}
+          key={dialog.kind === "edit" ? dialog.booking.id : `create:${dialog.date}:${dialog.startMin}`}
           state={dialog}
           salon={salon}
           date={date}

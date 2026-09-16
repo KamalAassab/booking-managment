@@ -197,9 +197,45 @@ export function SelectDropdown<T = string | number>({
   return (
     <div
       ref={containerRef}
-      className={`relative w-full ${isOpen ? "z-[60]" : ""} ${className}`}
+      className={`relative w-full ${isOpen ? "z-[var(--z-popover)]" : ""} ${className}`}
     >
       {name ? <input type="hidden" name={name} value={String(value)} /> : null}
+
+      {/* Phone: the platform's own picker — a wheel or sheet the agent
+          already knows, and one that a touch keyboard never fights with.
+          The styled listbox below is a desktop-only affordance; small
+          screens get the OS control instead of a second, imitation one. */}
+      <select
+        value={String(value)}
+        onChange={(e) => {
+          const match = allOptions.find((o) => String(o.value) === e.target.value);
+          if (match) onChange(match.value);
+        }}
+        disabled={disabled}
+        aria-label={placeholder}
+        className="field md:hidden"
+      >
+        {!selectedOption ? (
+          <option value="" disabled>
+            {placeholder}
+          </option>
+        ) : null}
+        {groups
+          ? groups.map((group) => (
+              <optgroup key={group.category} label={group.category}>
+                {group.items.map((opt) => (
+                  <option key={String(opt.value)} value={String(opt.value)}>
+                    {opt.label}
+                  </option>
+                ))}
+              </optgroup>
+            ))
+          : allOptions.map((opt) => (
+              <option key={String(opt.value)} value={String(opt.value)}>
+                {opt.label}
+              </option>
+            ))}
+      </select>
 
       <button
         ref={triggerRef}
@@ -217,7 +253,7 @@ export function SelectDropdown<T = string | number>({
             open();
           }
         }}
-        className="field flex items-center justify-between gap-2 text-left"
+        className="field hidden items-center justify-between gap-2 text-left md:flex"
         data-open={isOpen ? "" : undefined}
       >
         <span

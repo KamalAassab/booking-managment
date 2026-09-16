@@ -119,6 +119,63 @@ describe("layoutDay", () => {
     const backward = layoutDay([...list].reverse(), 30).items.map((i) => `${i.booking.id}:${i.lane}:${i.span}`).sort();
     expect(backward).toEqual(forward);
   });
+
+  it("leaves a cluster untouched when it fits within the lane cap", () => {
+    const bookings = [b("a", 600, 30), b("b", 600, 30), b("c", 600, 30)];
+    const { items, overflow, maxLanes } = layoutDay(bookings, 30, 4);
+    expect(items).toHaveLength(3);
+    expect(overflow).toHaveLength(0);
+    expect(maxLanes).toBe(3);
+  });
+
+  it("caps a busy cluster's lanes and bundles the rest into overflow", () => {
+    // Six services at once, capped to 4 visible lanes.
+    const bookings = Array.from({ length: 6 }, (_, i) => b(`x${i}`, 600, 30));
+    const { items, overflow, maxLanes } = layoutDay(bookings, 30, 4);
+    expect(maxLanes).toBe(4);
+    expect(items).toHaveLength(4);
+    expect(items.every((i) => i.lanes === 4)).toBe(true);
+    assertNoVisualOverlap(items);
+    expect(overflow).toHaveLength(1);
+    expect(overflow[0].bookings).toHaveLength(2);
+    expect(overflow[0]).toMatchObject({ top: 600, bottom: 630 });
+    // Every booking is accounted for exactly once.
+    const seen = new Set([...items.map((i) => i.booking.id), ...overflow.flatMap((g) => g.bookings.map((x) => x.id))]);
+    expect(seen.size).toBe(6);
+  });
+
+  it("splits overflow into separate badges when the excess bookings don't overlap each other", () => {
+    // a runs the whole hour in lane 0; b (600-630) and d (630-660) share
+    // lane 1 in sequence. c and e land in lane 2 — beyond the cap — but c
+    // and e never overlap each other, so they should not share one badge.
+    const bookings = [
+      b("a", 600, 60),
+      b("b", 600, 30),
+      b("c", 600, 30),
+      b("d", 630, 30),
+      b("e", 630, 30),
+    ];
+    const { items, overflow } = layoutDay(bookings, 30, 2);
+    expect(items).toHaveLength(3);
+    expect(overflow).toHaveLength(2);
+    const total = overflow.reduce((sum, g) => sum + g.bookings.length, 0);
+    expect(total).toBe(2);
+  });
+
+  it("never overlaps visible cards across 500 randomized busy days, capped or not", () => {
+    let seed = 7;
+    const rand = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+    for (let day = 0; day < 500; day += 1) {
+      const bookings = Array.from({ length: 5 + Math.floor(rand() * 30) }, (_, i) =>
+        b(`x${i}`, 540 + Math.floor(rand() * 26) * 30, [10, 20, 30, 45, 60, 90, 120, 180][Math.floor(rand() * 8)]),
+      );
+      const { items, overflow, maxLanes } = layoutDay(bookings, 30, 4);
+      assertNoVisualOverlap(items);
+      expect(maxLanes).toBeLessThanOrEqual(4);
+      const total = items.length + overflow.reduce((sum, g) => sum + g.bookings.length, 0);
+      expect(total).toBe(bookings.length);
+    }
+  });
 });
 
 describe("bookingPhase", () => {
