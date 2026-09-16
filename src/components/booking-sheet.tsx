@@ -9,7 +9,6 @@ import { Check, Close, RotateCcw, WhatsApp } from "@/components/icons";
 import { SelectDropdown } from "@/components/ui/select";
 import type { ToastMessage } from "@/components/toast";
 import { formatDuration, slotAvailability, type SlotAvailability } from "@/lib/day-layout";
-import type { DeviceMode } from "@/lib/device";
 import { formatPhoneForDisplay, normalizePhone } from "@/lib/phone";
 import {
   findCatalogEntry,
@@ -40,7 +39,6 @@ type Props = {
   bookings: BookingDTO[];
   /** The salon's bookable services — the owner's live catalogue. */
   catalog: ServiceCatalogEntry[];
-  mode: DeviceMode;
   onClose: () => void;
   /** A booking exactly as the server stored it, to show at once. */
   onSaved: (booking: BookingDTO, previousDate?: string) => void;
@@ -82,7 +80,6 @@ export function BookingSheet({
   today,
   bookings,
   catalog,
-  mode,
   onClose,
   onSaved,
   onChanged,
@@ -314,7 +311,9 @@ export function BookingSheet({
             durationMin,
             service: resolvedService,
             notes,
-            channel: mode,
+            // Every booking comes through the call centre — the front-desk
+            // "Réception" poste was removed (this salon has no reception).
+            channel: "call_center",
           }),
         });
       }

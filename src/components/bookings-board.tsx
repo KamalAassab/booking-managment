@@ -26,11 +26,7 @@ import {
   freeWindows,
   peakConcurrency,
 } from "@/lib/day-layout";
-import {
-  readSalonPreference,
-  useDeviceMode,
-  writeSalonPreference,
-} from "@/lib/device";
+import { readSalonPreference, writeSalonPreference } from "@/lib/device";
 import {
   getServicesForSalon,
   type ServiceCatalogEntry,
@@ -181,7 +177,6 @@ export function BookingsBoard({
     loaded: boolean;
   }>({ key: "", rows: [], loaded: false });
   const [dialog, setDialog] = useState<DialogState>(null);
-  const [mode, setDeviceMode] = useDeviceMode();
   const [stream, setStream] = useState<StreamState>("connecting");
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [query, setQuery] = useState("");
@@ -815,8 +810,6 @@ export function BookingsBoard({
         currentSalon={salon.slug}
         onSelectSalon={(slug) => navigate(slug, date)}
         onPrefetchSalon={prefetchSalon}
-        mode={mode}
-        onModeChange={setDeviceMode}
         role={role}
       />
 
@@ -966,7 +959,6 @@ export function BookingsBoard({
           today={today}
           bookings={bookings}
           catalog={catalog}
-          mode={mode}
           onClose={() => setDialog(null)}
           onSaved={applySavedBooking}
           onChanged={() => announceChange()}

@@ -202,7 +202,8 @@ function planSalon(
       service,
       notes: chance(rng, 0.15) ? pick(rng, NOTES) : null,
       status,
-      channel: chance(rng, 0.5) ? "call_center" : "front_desk",
+      // Every booking is a call-centre booking — there is no front-desk poste.
+      channel: "call_center",
     };
   });
 }

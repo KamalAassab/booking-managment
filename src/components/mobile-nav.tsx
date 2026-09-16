@@ -11,16 +11,12 @@ import {
   ListIcon,
   Menu,
   OwnerAvatarIcon,
-  Phone,
   Power,
   User,
 } from "@/components/icons";
-import type { DeviceMode } from "@/lib/device";
 
 type Props = {
   role: "staff" | "owner";
-  mode: DeviceMode;
-  onModeChange: (mode: DeviceMode) => void;
 };
 
 /**
@@ -29,7 +25,7 @@ type Props = {
  * and signing out) in an account sheet. Before this, a phone had no way to
  * reach Clients or to set the desk at all.
  */
-export function MobileNav({ role, mode, onModeChange }: Props) {
+export function MobileNav({ role }: Props) {
   const pathname = usePathname();
   const [accountOpen, setAccountOpen] = useState(false);
 
@@ -72,12 +68,7 @@ export function MobileNav({ role, mode, onModeChange }: Props) {
       </nav>
 
       {accountOpen ? (
-        <AccountSheet
-          role={role}
-          mode={mode}
-          onModeChange={onModeChange}
-          onClose={() => setAccountOpen(false)}
-        />
+        <AccountSheet role={role} onClose={() => setAccountOpen(false)} />
       ) : null}
     </>
   );
@@ -85,8 +76,6 @@ export function MobileNav({ role, mode, onModeChange }: Props) {
 
 function AccountSheet({
   role,
-  mode,
-  onModeChange,
   onClose,
 }: Props & { onClose: () => void }) {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -136,33 +125,6 @@ function AccountSheet({
           <button type="button" className="btn-icon" onClick={onClose} aria-label="Fermer">
             <Close size={20} />
           </button>
-        </div>
-
-        <div className="mt-2">
-          <p className="label">Poste de cet appareil</p>
-          <div role="radiogroup" aria-label="Poste" className="grid grid-cols-2 gap-2">
-            {(
-              [
-                ["front_desk", "Réception", User],
-                ["call_center", "Centre d'appels", Phone],
-              ] as const
-            ).map(([value, label, Icon]) => (
-              <button
-                key={value}
-                type="button"
-                role="radio"
-                aria-checked={mode === value}
-                onClick={() => onModeChange(value)}
-                className="choice"
-              >
-                <Icon size={18} />
-                {label}
-              </button>
-            ))}
-          </div>
-          <p className="t-small mt-2" style={{ color: "var(--ink-faint)" }}>
-            Enregistré sur chaque rendez-vous pris depuis cet appareil.
-          </p>
         </div>
 
         <form action={logout} className="mt-5">

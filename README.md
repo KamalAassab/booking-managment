@@ -65,11 +65,13 @@ DATABASE_URL='postgres://postgres@127.0.0.1:5432/atelier' npm run db:migrate
 The shared account is not scoped to a salon, so each browser remembers its
 own preferences:
 
-- **Salon** — a front desk reopens on its own salon rather than re-picking it
+- **Salon** — an agent reopens on their own salon rather than re-picking it
   every morning.
-- **Poste** — `Réception` or `Appels` (call centre), chosen in the sidebar.
-  This is a property of the desk, not of a person: it is recorded on every
-  booking as its `channel`. Nothing about it is attributed to a user.
+
+Every booking is filed with `channel = call_center`: the group takes bookings
+through its call centre, so there is no front-desk/reception poste to choose.
+The `channel` column and its enum keep the `front_desk` value for historical
+rows, but nothing in the app writes it any more.
 
 ## How the two hard requirements are met
 

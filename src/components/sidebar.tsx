@@ -10,13 +10,12 @@ import {
   Grid,
   ListIcon,
   OwnerAvatarIcon,
-  Phone,
   Power,
   SalonGlyph,
   User,
 } from "@/components/icons";
 import { MobileNav } from "@/components/mobile-nav";
-import { useDeviceMode, useSidebarCollapsed, type DeviceMode } from "@/lib/device";
+import { useSidebarCollapsed } from "@/lib/device";
 import { salonColor, shortName } from "@/lib/salon-display";
 import type { SalonDTO } from "@/lib/types";
 
@@ -31,8 +30,6 @@ type Props = {
   currentSalon?: string;
   onSelectSalon?: (slug: string) => void;
   onPrefetchSalon?: (slug: string) => void;
-  mode?: DeviceMode;
-  onModeChange?: (mode: DeviceMode) => void;
   role?: "staff" | "owner";
 };
 
@@ -47,17 +44,11 @@ export function Sidebar({
   currentSalon = "vip",
   onSelectSalon,
   onPrefetchSalon,
-  mode,
-  onModeChange,
   role = "owner",
 }: Props) {
   const [collapsed, setCollapsed] = useSidebarCollapsed();
-  const [internalMode, setInternalMode] = useDeviceMode();
   const pathname = usePathname();
   const router = useRouter();
-
-  const activeMode = mode ?? internalMode;
-  const handleModeChange = onModeChange ?? setInternalMode;
 
   const isPlanning = pathname.startsWith("/bookings") || pathname === "/";
   const nav = [
@@ -139,40 +130,6 @@ export function Sidebar({
         </div>
 
         <div className="sb-footer">
-          {/* The desk this browser sits at (README, "Device settings"),
-              recorded on every booking as its channel: how the booking
-              arrived, never who took it. */}
-          <div className="sb-expanded">
-            <p className="sb-heading">Poste</p>
-            <div role="radiogroup" aria-label="Poste" className="sb-seg">
-              {(
-                [
-                  ["front_desk", "Réception"],
-                  ["call_center", "Appels"],
-                ] as const
-              ).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  role="radio"
-                  aria-checked={activeMode === value}
-                  onClick={() => handleModeChange(value)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => handleModeChange(activeMode === "call_center" ? "front_desk" : "call_center")}
-            title={`Poste : ${activeMode === "call_center" ? "centre d'appels" : "réception"}. Cliquer pour changer.`}
-            aria-label={`Poste : ${activeMode === "call_center" ? "centre d'appels" : "réception"}. Changer de poste`}
-            className="sb-item sb-compact"
-          >
-            {activeMode === "call_center" ? <Phone size={18} /> : <User size={18} />}
-          </button>
-
           <div className="sb-role sb-expanded">
             <span className="sb-role-icon" aria-hidden>
               {role === "owner" ? <OwnerAvatarIcon size={16} /> : <User size={15} />}
@@ -196,7 +153,7 @@ export function Sidebar({
         </div>
       </aside>
 
-      <MobileNav role={role} mode={activeMode} onModeChange={handleModeChange} />
+      <MobileNav role={role} />
     </>
   );
 }
