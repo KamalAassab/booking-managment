@@ -97,6 +97,7 @@ export function DayPanel({
                   booking={b}
                   phase={bookingPhase(b, today, nowMin)}
                   nowMin={nowMin}
+                  detail="end"
                   onSelect={() => onSelectBooking(b)}
                 />
               </li>

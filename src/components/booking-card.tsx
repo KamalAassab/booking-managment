@@ -282,7 +282,14 @@ export function AgendaRow({
               <Note size={12} />
             </span>
           ) : null}
-          {phase === "running" ? <span className="bkr-live">en cours</span> : null}
+          {/* A running booking carries its countdown here, which leaves the
+              line below free to say when it finishes — the two answer
+              different questions and the desk wants both. */}
+          {phase === "running" ? (
+            <span className="bkr-live" data-nums>
+              {formatRemaining(end, nowMin)}
+            </span>
+          ) : null}
         </span>
         <span className="bkr-sub">
           {/* No price here: on a 390px screen it pushed the service name into
@@ -294,12 +301,10 @@ export function AgendaRow({
               {" "}· {formatDuration(booking.durationMin)}
             </span>
           </span>
-          <span
-            className="bkr-end"
-            data-nums
-            style={phase === "running" ? { color: "var(--accent-ink)", fontWeight: 600 } : undefined}
-          >
-            {phase === "running" ? formatRemaining(end, nowMin) : minutesToLabel(end)}
+          {/* Spelled out: a bare "18:45" sitting opposite the 18:00 in the
+              time column read as another start time. */}
+          <span className="bkr-end">
+            fin <span data-nums>{minutesToLabel(end)}</span>
           </span>
         </span>
       </button>
@@ -332,8 +337,9 @@ export function CompactBooking({
   phase: BookingPhase;
   nowMin: number;
   onSelect: () => void;
-  /** What the right-hand figure says: the duration, a countdown, or nothing. */
-  detail?: "duration" | "countdown" | "none";
+  /** What the right-hand figure says: when it ends, how long it runs, a
+      countdown, or nothing. */
+  detail?: "duration" | "countdown" | "end" | "none";
 }) {
   const end = booking.startMin + booking.durationMin;
   const figure =
@@ -343,7 +349,9 @@ export function CompactBooking({
         : formatStartsIn(booking.startMin, nowMin)
       : detail === "duration"
         ? formatDuration(booking.durationMin)
-        : null;
+        : detail === "end"
+          ? `fin ${minutesToLabel(end)}`
+          : null;
   const label = describeBooking(booking, phase);
 
   return (

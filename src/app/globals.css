@@ -1264,18 +1264,19 @@
     text-overflow: ellipsis;
   }
 
+  /* Carries the countdown on a running booking ("reste 40 min"), so it reads
+     as a sentence rather than a shouted label. */
   .bkr-live {
     flex: none;
     margin-left: auto;
-    padding: 0 6px;
+    padding: 0 7px;
     border-radius: 999px;
     background: color-mix(in srgb, var(--accent) 22%, transparent);
     color: var(--accent-ink);
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 700;
-    line-height: 16px;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
+    line-height: 17px;
+    white-space: nowrap;
   }
 
   .bkr-sub {

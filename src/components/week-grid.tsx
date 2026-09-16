@@ -148,7 +148,18 @@ export function WeekGrid({
                             ) : null}
                             <span className="truncate">{b.clientName}</span>
                           </span>
-                          <span className="bk-line text-[12px]">{b.service}</span>
+                          <span className="bk-line flex items-center gap-2 text-[12px]">
+                            <span className="truncate">{b.service}</span>
+                            {/* Dropped only at xl, where the week becomes
+                                seven narrow columns and the name needs the
+                                room more than the clock does. */}
+                            <span
+                              className="ml-auto shrink-0 xl:hidden"
+                              style={{ color: "var(--ink-faint)" }}
+                            >
+                              fin <span data-nums>{minutesToLabel(b.startMin + b.durationMin)}</span>
+                            </span>
+                          </span>
                         </button>
                       </li>
                     );
