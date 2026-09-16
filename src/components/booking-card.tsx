@@ -219,6 +219,106 @@ export function AgendaBooking({
   );
 }
 
+/* ---- Dense agenda row (phone day view) ----------------------------------- */
+
+/**
+ * The phone's day list, at roughly half the height of `AgendaBooking`.
+ *
+ * A salon day here runs to 110 bookings. At the old card's ~100px that was
+ * seven screens of thumb-scrolling with four appointments visible at a time,
+ * so this drops to two lines: who, then what and when it ends. The phone
+ * number and the notes moved into the sheet a tap away — at a glance nobody
+ * reads a number, they read the name and whether it is running.
+ *
+ * The start time is deliberately NOT here: rows are grouped under the one
+ * time they share, so printing it per row would repeat it for every
+ * simultaneous booking.
+ */
+export function AgendaRow({
+  booking,
+  phase,
+  salon,
+  catalog,
+  nowMin,
+  onSelect,
+}: {
+  booking: BookingDTO;
+  phase: BookingPhase;
+  salon: SalonDTO;
+  catalog: readonly ServiceCatalogEntry[];
+  nowMin: number;
+  onSelect: () => void;
+}) {
+  const end = booking.startMin + booking.durationMin;
+  const whatsapp =
+    phase === "upcoming" || phase === "running"
+      ? buildWhatsAppLink({
+          clientName: booking.clientName,
+          clientPhone: booking.clientPhone,
+          salonName: salon.name,
+          salonSlug: salon.slug,
+          bookingDate: booking.bookingDate,
+          startMin: booking.startMin,
+          durationMin: booking.durationMin,
+          service: booking.service,
+          notes: booking.notes,
+          catalog: [...catalog],
+        })
+      : null;
+
+  return (
+    <div className="bkr" data-phase={phase}>
+      <button
+        type="button"
+        onClick={onSelect}
+        className="bkr-main"
+        aria-label={describeBooking(booking, phase)}
+      >
+        <span className="bkr-top">
+          {phase === "done" ? <DoneMark size={13} /> : null}
+          <span className="bkr-name">{booking.clientName}</span>
+          {booking.notes ? (
+            <span className="shrink-0" style={{ color: "var(--ink-faint)" }} aria-hidden>
+              <Note size={12} />
+            </span>
+          ) : null}
+          {phase === "running" ? <span className="bkr-live">en cours</span> : null}
+        </span>
+        <span className="bkr-sub">
+          {/* No price here: on a 390px screen it pushed the service name into
+              an ellipsis, and the service is what the desk reads. The price
+              is in the sheet, one tap away. */}
+          <span className="truncate">
+            {booking.service}
+            <span data-nums>
+              {" "}· {formatDuration(booking.durationMin)}
+            </span>
+          </span>
+          <span
+            className="bkr-end"
+            data-nums
+            style={phase === "running" ? { color: "var(--accent-ink)", fontWeight: 600 } : undefined}
+          >
+            {phase === "running" ? formatRemaining(end, nowMin) : minutesToLabel(end)}
+          </span>
+        </span>
+      </button>
+      {whatsapp ? (
+        <a
+          href={whatsapp}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="bkr-wa"
+          aria-label={`Confirmer sur WhatsApp à ${booking.clientName}`}
+          title="Confirmer sur WhatsApp"
+        >
+          <WhatsApp size={18} />
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
 /* ---- Compact line (side panels, week columns) ---------------------------- */
 
 export function CompactBooking({

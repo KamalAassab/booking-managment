@@ -946,8 +946,8 @@ export function BookingsBoard({
         className="fab md:hidden"
         aria-label="Nouveau rendez-vous"
       >
-        <Plus size={22} />
-        <span>Nouveau</span>
+        <Plus size={24} />
+        <span className="sr-only">Nouveau</span>
       </button>
 
       {dialog ? (

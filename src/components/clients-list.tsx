@@ -18,8 +18,13 @@ type Props = {
 type SortBy = "bookings" | "recent" | "name";
 type Loyalty = "all" | "frequent" | "upcoming";
 
-/** Rows drawn at a time: 706 cards at once took seconds to paint. */
-const PAGE = 60;
+/**
+ * Rows drawn at a time: 706 cards at once took seconds to paint, and on a
+ * phone even 60 is six screens of thumb-scrolling before the "show more"
+ * button that was supposed to bound the list. A page is a couple of screens;
+ * past that, searching beats scrolling.
+ */
+const PAGE = 25;
 
 const DATE_FMT = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", timeZone: "UTC" });
 const DATE_YEAR_FMT = new Intl.DateTimeFormat("fr-FR", {
