@@ -1037,6 +1037,64 @@
     }
   }
 
+  /* ---- Sign-in ------------------------------------------------------ */
+
+  /* The only screen anyone sees before signing in, and the one the salon
+     leaves open on a shared machine — so it goes dark, using the obsidian
+     palette the sidebar already runs on rather than inventing a second one.
+     It does that by redefining the surface and ink tokens inside this scope:
+     .card, .field, .label, the role toggle and the error box all follow,
+     with no dark-mode branch anywhere in the markup. */
+  .auth-noir {
+    color-scheme: dark;
+
+    --paper: var(--noir);
+    --surface: var(--noir-raised);
+    --surface-raised: var(--noir-raised);
+    --surface-sunk: #100E0D;
+    --surface-hover: #221F1C;
+    --field: #131110;
+    --line: var(--noir-line);
+    --line-strong: rgba(255, 255, 255, 0.16);
+    --line-field: rgba(255, 255, 255, 0.2);
+
+    --ink: var(--noir-ink);
+    --ink-soft: var(--noir-ink-soft);
+    --ink-faint: #9C9288;
+    --ink-ghost: rgba(255, 255, 255, 0.26);
+
+    /* Gold carries further on black, and gold *text* has to come up
+       several steps to stay readable against it. The button keeps dark
+       ink on a gold fill, which is already the right way round. */
+    --accent: #D2A733;
+    --accent-hover: #E0B849;
+    --accent-ink: #E8C769;
+    --accent-tint: rgba(197, 155, 39, 0.14);
+    --accent-tint-strong: rgba(197, 155, 39, 0.24);
+    --accent-glow: rgba(197, 155, 39, 0.28);
+
+    --danger: #FF9C90;
+    --danger-tint: rgba(180, 35, 24, 0.22);
+    --success: #7FC8A2;
+    --success-tint: rgba(47, 107, 79, 0.24);
+
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 30px rgba(0, 0, 0, 0.45);
+    --shadow-hover: 0 2px 6px rgba(0, 0, 0, 0.5), 0 14px 34px rgba(0, 0, 0, 0.5);
+
+    background: var(--paper);
+    color: var(--ink);
+  }
+
+  /* The dark has to reach past the viewport as well, or an iOS rubber-band
+     scroll flashes the light body behind it — and the browser needs to know
+     so its own form controls and scrollbars come up dark too. */
+  html:has(.auth-noir),
+  body:has(.auth-noir) {
+    background: var(--noir);
+    color-scheme: dark;
+  }
+
   /* ---- Agenda ------------------------------------------------------- */
 
   /* The phone day list. A full salon day is ~110 bookings, so everything
