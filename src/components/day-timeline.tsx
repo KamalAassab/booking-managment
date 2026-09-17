@@ -5,7 +5,6 @@ import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState }
 import { CompactBooking, TimelineBooking } from "@/components/booking-card";
 import { Plus } from "@/components/icons";
 import { bookingPhase, layoutDay, timelineBounds } from "@/lib/day-layout";
-import type { ServiceCatalogEntry } from "@/lib/services-catalog";
 import { isSlotOver, minutesToLabel } from "@/lib/time";
 import type { BookingDTO, SalonDTO } from "@/lib/types";
 
@@ -16,7 +15,6 @@ type Props = {
   nowMin: number;
   /** The day's bookings, cancelled ones already removed. */
   bookings: BookingDTO[];
-  catalog: readonly ServiceCatalogEntry[];
   /** Ids matching the search box, or null when nothing is searched. */
   matches: Set<string> | null;
   loading: boolean;
@@ -62,7 +60,6 @@ export function DayTimeline({
   today,
   nowMin,
   bookings,
-  catalog,
   matches,
   loading,
   sheetOpen,
@@ -211,7 +208,6 @@ export function DayTimeline({
                     <TimelineBooking
                       booking={item.booking}
                       phase={phase}
-                      catalog={catalog}
                       nowMin={nowMin}
                       onSelect={() => onSelectBooking(item.booking)}
                     />

@@ -48,19 +48,26 @@ export function nextPhone(): string {
   return `061${String(clientCounter % 10_000_000).padStart(7, "0")}`;
 }
 
+/**
+ * `service` and `durationMin` are shorthand for a one-line `services` array
+ * — nearly every test only cares about the one line, so the flat shape stays
+ * convenient to write; pass `services` directly for a multi-line booking.
+ */
 export function bookingInput(overrides: Record<string, unknown> = {}) {
   const phone = nextPhone();
+  const { service, durationMin, services, ...rest } = overrides;
   return {
     salonSlug: "vip",
     clientName: `Client ${phone.slice(-4)}`,
     clientPhone: phone,
     bookingDate: futureDate(),
     startMin: 600,
-    durationMin: 30,
-    service: "Manucure Simple",
+    services: services ?? [
+      { service: service ?? "Manucure Simple", durationMin: durationMin ?? 30 },
+    ],
     notes: "",
     channel: "front_desk",
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -83,9 +90,11 @@ export type OverlapRow = {
 };
 
 /**
- * Every pair of live bookings that the business would call a double booking:
- * same salon, same day, the same service (ignoring case and surrounding
- * spaces, as staff type it), and intersecting [start, end) minutes.
+ * Every pair of live services (across any bookings) that the business would
+ * call a double booking: same salon, same day, the same service (ignoring
+ * case and surrounding spaces, as staff type it), and intersecting
+ * [start, end) minutes. The guarantee lives on booking_services now — one
+ * row per service, not per appointment — so that is what this checks.
  */
 export async function findDoubleBookings(): Promise<OverlapRow[]> {
   const result = await db.execute(sql`
@@ -93,8 +102,8 @@ export async function findDoubleBookings(): Promise<OverlapRow[]> {
            a.booking_date::text as day,
            a.start_min as a_start, a.duration_min as a_duration,
            b.start_min as b_start, b.duration_min as b_duration
-      from bookings a
-      join bookings b
+      from booking_services a
+      join booking_services b
         on a.salon_id = b.salon_id
        and a.booking_date = b.booking_date
        and lower(btrim(a.service)) = lower(btrim(b.service))

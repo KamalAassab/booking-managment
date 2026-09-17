@@ -1,7 +1,12 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, expect, it } from "vitest";
 
-import { bookings as bookingsTable, services, type Salon } from "@/db/schema";
+import {
+  bookingServices as bookingServicesTable,
+  bookings as bookingsTable,
+  services,
+  type Salon,
+} from "@/db/schema";
 import { cancelBooking, createBooking, updateBooking } from "@/lib/bookings";
 import { listAllClients, searchClientSuggestions } from "@/lib/clients";
 import { getServicesForSalon } from "@/lib/services-catalog";
@@ -110,8 +115,7 @@ describeIfDb("clients directory", () => {
       clientPhone: phone,
       bookingDate: day,
       startMin,
-      durationMin: 30,
-      service,
+      services: [{ service, durationMin: 30, price: 0 }],
       notes: undefined,
       channel: "front_desk",
     });
@@ -155,22 +159,35 @@ describeIfDb("clients directory", () => {
   it("never reports a future booking as the last visit", async () => {
     const upcoming = await book("Sarah Benali", "0612345678", 600);
     // A past visit cannot be booked through the API any more; it is history.
-    await db.insert(bookingsTable).values({
+    const [pastBooking] = await db
+      .insert(bookingsTable)
+      .values({
+        salonId: salons.vip.id,
+        clientName: "Sarah Benali",
+        clientPhone: "+212612345678",
+        bookingDate: "2024-03-02",
+        startMin: 600,
+        durationMin: 30,
+        channel: "front_desk",
+        status: "done",
+      })
+      .returning();
+    await db.insert(bookingServicesTable).values({
+      bookingId: pastBooking.id,
       salonId: salons.vip.id,
-      clientName: "Sarah Benali",
-      clientPhone: "+212612345678",
       bookingDate: "2024-03-02",
+      status: "done",
+      service: "Coupe",
       startMin: 600,
       durationMin: 30,
-      service: "Coupe",
-      channel: "front_desk",
-      status: "done",
+      price: 0,
+      sortOrder: 0,
     });
 
     const [sarah] = await listAllClients();
     expect(sarah.lastBookingDate).toBe(day);
     expect(sarah.lastVisitDate).toBe("2024-03-02");
-    expect(sarah.nextBooking).toEqual({ bookingDate: day, startMin: 600, service: upcoming.service });
+    expect(sarah.nextBooking).toEqual({ bookingDate: day, startMin: 600, service: "Manucure Simple" });
 
     await cancelBooking(upcoming.id);
     const [afterCancel] = await listAllClients();

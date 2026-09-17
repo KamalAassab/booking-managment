@@ -5,8 +5,7 @@ import {
   readJson,
   unauthorized,
 } from "@/lib/api";
-import { createBooking, getSalonBySlug, listBookings } from "@/lib/bookings";
-import { catalogsForSalons } from "@/lib/services";
+import { createBooking, getSalonBySlug, listBookings, toBookingDTOs } from "@/lib/bookings";
 import { toBookingDTO } from "@/lib/types";
 import { createBookingSchema, listQuerySchema } from "@/lib/validation";
 import { buildWhatsAppLink } from "@/lib/whatsapp";
@@ -32,7 +31,7 @@ export async function GET(request: Request) {
     if (!salon) return jsonNoStore({ error: "Salon introuvable." }, 404);
 
     const rows = await listBookings(salon.id, parsed.data.date);
-    return jsonNoStore({ bookings: rows.map(toBookingDTO) });
+    return jsonNoStore({ bookings: await toBookingDTOs(rows) });
   } catch (error) {
     return errorResponse(error, "GET /api/bookings");
   }
@@ -58,29 +57,20 @@ export async function POST(request: Request) {
 
     // Past dates and slots that have already ended are refused inside
     // createBooking, where the salon's slot length is known.
-    const { booking, salon } = await createBooking(parsed.data);
-
-    // The booking is committed at this point, so nothing below may turn it
-    // into an error response — an agent told "failed" would book it again.
-    // A catalogue that cannot be read just means the static prices.
-    const catalog = await catalogsForSalons([salon])
-      .then((catalogs) => catalogs[salon.slug])
-      .catch(() => undefined);
+    const { booking, services, salon } = await createBooking(parsed.data);
 
     const whatsappUrl = buildWhatsAppLink({
-      catalog,
       clientName: booking.clientName,
       clientPhone: booking.clientPhone,
       salonName: salon.name,
       salonSlug: salon.slug,
       bookingDate: booking.bookingDate,
       startMin: booking.startMin,
-      durationMin: booking.durationMin,
-      service: booking.service,
+      services,
       notes: booking.notes,
     });
 
-    return jsonNoStore({ booking: toBookingDTO(booking), whatsappUrl }, 201);
+    return jsonNoStore({ booking: toBookingDTO(booking, services), whatsappUrl }, 201);
   } catch (error) {
     return errorResponse(error, "POST /api/bookings");
   }

@@ -38,19 +38,33 @@ import {
 
 const DAY = futureDate(10);
 
-function input(overrides: Partial<CreateBookingInput> = {}): CreateBookingInput {
+const DEFAULT_SERVICE = "Manucure Simple";
+
+/**
+ * `service` and `durationMin` are shorthand for a one-line `services` array
+ * — most tests only care about the one line, so the flat shape stays
+ * convenient; pass `services` directly for a multi-line booking.
+ */
+function input(
+  overrides: Partial<CreateBookingInput> & { service?: string; durationMin?: number } = {},
+): CreateBookingInput {
+  const { service, durationMin, services, ...rest } = overrides;
   return {
     salonSlug: "vip",
     clientName: "Sarah Benali",
     clientPhone: nextPhone(),
     bookingDate: DAY,
     startMin: 600,
-    durationMin: 30,
-    service: "Manucure Simple",
+    services: services ?? [{ service: service ?? DEFAULT_SERVICE, durationMin: durationMin ?? 30, price: 0 }],
     notes: undefined,
     channel: "front_desk",
-    ...overrides,
+    ...rest,
   };
+}
+
+/** Shorthand for an updateBooking patch that only touches the service line(s). */
+function svc(service: string, durationMin = 30, price = 0) {
+  return [{ service, durationMin, price }];
 }
 
 async function rejection(promise: Promise<unknown>): Promise<unknown> {
@@ -98,7 +112,7 @@ describeIfDb("salons", () => {
 
 describeIfDb("createBooking", () => {
   it("stores a normalised, trimmed booking and returns its salon", async () => {
-    const { booking, salon } = await createBooking(
+    const { booking, services, salon } = await createBooking(
       input({
         clientName: "  Sarah Benali  ",
         clientPhone: "06 12 34 56 78",
@@ -115,11 +129,11 @@ describeIfDb("createBooking", () => {
       bookingDate: DAY,
       startMin: 600,
       durationMin: 30,
-      service: "Manucure Simple",
       notes: "allergie au latex",
       status: "confirmed",
       channel: "call_center",
     });
+    expect(services).toMatchObject([{ service: "Manucure Simple", startMin: 600, durationMin: 30 }]);
     expect((await getBookingById(booking.id))?.clientPhone).toBe("+212612345678");
   });
 
@@ -260,7 +274,7 @@ describeIfDb("updateBooking", () => {
 
   it("moves a booking to a free slot", async () => {
     const { booking } = await createBooking(input());
-    const moved = await updateBooking(booking.id, { startMin: 720, durationMin: 60 });
+    const moved = await updateBooking(booking.id, { startMin: 720, services: svc(DEFAULT_SERVICE, 60) });
     expect(moved).toMatchObject({ startMin: 720, durationMin: 60 });
   });
 
@@ -275,7 +289,7 @@ describeIfDb("updateBooking", () => {
 
   it("does not conflict with itself when extended over its own minutes", async () => {
     const { booking } = await createBooking(input({ startMin: 600, durationMin: 30 }));
-    const longer = await updateBooking(booking.id, { durationMin: 90 });
+    const longer = await updateBooking(booking.id, { services: svc(DEFAULT_SERVICE, 90) });
     expect(longer?.durationMin).toBe(90);
     const shifted = await updateBooking(booking.id, { startMin: 630 });
     expect(shifted?.startMin).toBe(630);
@@ -291,30 +305,32 @@ describeIfDb("updateBooking", () => {
   it("throws SlotTakenError when extended into the next booking of the same service", async () => {
     await createBooking(input({ startMin: 660 }));
     const { booking } = await createBooking(input({ startMin: 600 }));
-    expect(await rejection(updateBooking(booking.id, { durationMin: 90 }))).toBeInstanceOf(SlotTakenError);
+    expect(await rejection(updateBooking(booking.id, { services: svc(DEFAULT_SERVICE, 90) }))).toBeInstanceOf(SlotTakenError);
   });
 
   it("throws SlotTakenError when the service is changed into one already booked then", async () => {
     await createBooking(input({ service: "Pédicure SPA" }));
     const { booking } = await createBooking(input({ service: "Manucure Simple" }));
-    expect(await rejection(updateBooking(booking.id, { service: "Pédicure SPA" }))).toBeInstanceOf(SlotTakenError);
+    expect(await rejection(updateBooking(booking.id, { services: svc("Pédicure SPA") }))).toBeInstanceOf(SlotTakenError);
   });
 
   it("re-checks opening hours whenever the booking moves", async () => {
     const { booking } = await createBooking(input());
     expect(await rejection(updateBooking(booking.id, { startMin: 540 }))).toBeInstanceOf(ValidationError);
-    expect(await rejection(updateBooking(booking.id, { startMin: 1290, durationMin: 60 }))).toBeInstanceOf(ValidationError);
+    expect(
+      await rejection(updateBooking(booking.id, { startMin: 1290, services: svc(DEFAULT_SERVICE, 60) })),
+    ).toBeInstanceOf(ValidationError);
     expect(await rejection(updateBooking(booking.id, { startMin: 615 }))).toBeInstanceOf(ValidationError);
     // Extending only the duration past closing is still a move in time.
     const { booking: late } = await createBooking(input({ startMin: 1260 }));
-    expect(await rejection(updateBooking(late.id, { durationMin: 90 }))).toBeInstanceOf(ValidationError);
+    expect(await rejection(updateBooking(late.id, { services: svc(DEFAULT_SERVICE, 90) }))).toBeInstanceOf(ValidationError);
   });
 
   it("rejects an invalid phone or blank name on update", async () => {
     const { booking } = await createBooking(input());
     expect(await rejection(updateBooking(booking.id, { clientPhone: "123" }))).toBeInstanceOf(ValidationError);
     expect(await rejection(updateBooking(booking.id, { clientName: "  " }))).toBeInstanceOf(ValidationError);
-    expect(await rejection(updateBooking(booking.id, { service: " " }))).toBeInstanceOf(ValidationError);
+    expect(await rejection(updateBooking(booking.id, { services: svc(" ") }))).toBeInstanceOf(ValidationError);
     expect(await rejection(updateBooking(booking.id, { bookingDate: "2030-13-01" }))).toBeInstanceOf(ValidationError);
   });
 

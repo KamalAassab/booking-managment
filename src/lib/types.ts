@@ -12,6 +12,15 @@ import type { Booking, Salon } from "@/db/schema";
 export type BookingStatus = "confirmed" | "cancelled" | "done";
 export type BookingChannel = "call_center" | "front_desk";
 
+/** One line item of a booking, in the order it runs. */
+export type BookingServiceDTO = {
+  service: string;
+  /** This service's own slice of the visit — sums to the booking's durationMin. */
+  startMin: number;
+  durationMin: number;
+  price: number;
+};
+
 export type BookingDTO = {
   id: string;
   salonId: string;
@@ -19,8 +28,11 @@ export type BookingDTO = {
   clientPhone: string;
   bookingDate: string;
   startMin: number;
+  /** Sum of `services[].durationMin` — the whole visit's block on the calendar. */
   durationMin: number;
-  service: string;
+  services: BookingServiceDTO[];
+  /** "Coupe + Coloration" — every place that used to show one service name. */
+  serviceLabel: string;
   notes: string | null;
   status: BookingStatus;
   channel: BookingChannel;
@@ -35,7 +47,29 @@ export type SalonDTO = {
   slotMin: number;
 };
 
-export function toBookingDTO(row: Booking): BookingDTO {
+/** Joins a booking's services into the one string every card and message shows. */
+export function formatServiceLabel(services: readonly { service: string }[]): string {
+  return services.map((s) => s.service).join(" + ");
+}
+
+export function toBookingDTO(
+  row: Booking,
+  serviceLines: readonly {
+    service: string;
+    startMin: number;
+    durationMin: number;
+    price: number;
+    sortOrder: number;
+  }[],
+): BookingDTO {
+  const services = [...serviceLines]
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((s) => ({
+      service: s.service,
+      startMin: s.startMin,
+      durationMin: s.durationMin,
+      price: s.price,
+    }));
   return {
     id: row.id,
     salonId: row.salonId,
@@ -44,7 +78,8 @@ export function toBookingDTO(row: Booking): BookingDTO {
     bookingDate: row.bookingDate,
     startMin: row.startMin,
     durationMin: row.durationMin,
-    service: row.service,
+    services,
+    serviceLabel: formatServiceLabel(services),
     notes: row.notes,
     status: row.status,
     channel: row.channel,

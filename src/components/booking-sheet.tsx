@@ -5,7 +5,14 @@ import { useRouter } from "next/navigation";
 
 import type { DialogState } from "@/components/bookings-board";
 import { ClientCombobox } from "@/components/client-combobox";
-import { Calendar as CalendarIcon, Check, Close, RotateCcw, WhatsApp } from "@/components/icons";
+import {
+  Calendar as CalendarIcon,
+  Check,
+  Close,
+  Plus,
+  RotateCcw,
+  WhatsApp,
+} from "@/components/icons";
 import { Calendar } from "@/components/ui/calendar";
 import { SelectDropdown } from "@/components/ui/select";
 import type { ToastMessage } from "@/components/toast";
@@ -26,14 +33,70 @@ import {
   nowMinutesInSalonTz,
   slotsForSalon,
 } from "@/lib/time";
-import type { BookingDTO, SalonDTO } from "@/lib/types";
-import { DURATION_OPTIONS } from "@/lib/validation";
+import type { BookingDTO, BookingServiceDTO, SalonDTO } from "@/lib/types";
+import { DURATION_OPTIONS, MAX_SERVICES_PER_BOOKING } from "@/lib/validation";
 import { buildWhatsAppLink } from "@/lib/whatsapp";
 
 const CUSTOM_SERVICE = "Autre";
 const SLOT_TAKEN = "Ce créneau vient d'être réservé sur un autre poste.";
 /** How long "Confirmer l'annulation" waits for its second tap. */
 const CONFIRM_MS = 4000;
+
+/** One line of the sheet's service list — the form's own shape, not the wire one. */
+type ServiceEntry = {
+  key: string;
+  /** A catalogue name, or CUSTOM_SERVICE with the real name in `customService`. */
+  service: string;
+  customService: string;
+  durationMin: number;
+  price: number | "";
+};
+
+let entryKeySeed = 0;
+function nextEntryKey(): string {
+  entryKeySeed += 1;
+  return `entry-${entryKeySeed}`;
+}
+
+/** A fresh, empty line — a new booking, or "+ Ajouter un service", both start blank. */
+function emptyEntry(durationMin: number): ServiceEntry {
+  return { key: nextEntryKey(), service: "", customService: "", durationMin, price: "" };
+}
+
+/** A booking's saved lines, resolved against the catalogue so real services keep their duration/price editable. */
+function entriesFromServices(
+  services: readonly BookingServiceDTO[],
+  catalog: readonly ServiceCatalogEntry[],
+): ServiceEntry[] {
+  return services.map((s) => {
+    const found = findCatalogEntry(catalog, s.service);
+    return {
+      key: nextEntryKey(),
+      service: found ? found.name : CUSTOM_SERVICE,
+      customService: found ? "" : s.service,
+      durationMin: s.durationMin,
+      price: s.price,
+    };
+  });
+}
+
+/** The usual duration choices, plus the current one if it's off the list — an owner-set duration must stay selectable. */
+function durationOptionsFor(current: number): number[] {
+  const options: number[] = [...DURATION_OPTIONS];
+  return options.includes(current) ? options : [...options, current].sort((a, b) => a - b);
+}
+
+function sameServiceLines(
+  a: readonly { service: string; durationMin: number }[],
+  b: readonly { service: string; durationMin: number }[],
+): boolean {
+  if (a.length !== b.length) return false;
+  return a.every(
+    (x, i) =>
+      x.service.trim().toLowerCase() === b[i].service.trim().toLowerCase() &&
+      x.durationMin === b[i].durationMin,
+  );
+}
 
 type Props = {
   state: NonNullable<DialogState>;
@@ -100,24 +163,16 @@ export function BookingSheet({
   const [clientPhone, setClientPhone] = useState(
     editing ? formatPhoneForDisplay(editing.clientPhone) : "",
   );
-  // A new booking starts with no service: the first entry of a sixty-line
-  // catalogue is almost never the right one, and a wrong default is saved
-  // silently.
-  const [service, setService] = useState(() => {
-    if (!editing) return "";
-    return catalogEntryFor(editing.service)?.name ?? CUSTOM_SERVICE;
-  });
-  const [customService, setCustomService] = useState(
-    editing && !catalogEntryFor(editing.service) ? editing.service : "",
+  // A new booking starts with one empty line: the first entry of a
+  // sixty-line catalogue is almost never the right one, and a wrong default
+  // is saved silently.
+  const [entries, setEntries] = useState<ServiceEntry[]>(() =>
+    editing && editing.services.length > 0
+      ? entriesFromServices(editing.services, catalog)
+      : [emptyEntry(salon.slotMin)],
   );
   const [startMin, setStartMin] = useState(
     state.kind === "edit" ? state.booking.startMin : state.startMin,
-  );
-  const [durationMin, setDurationMin] = useState(
-    editing?.durationMin ?? salon.slotMin,
-  );
-  const [price, setPrice] = useState<number | "">(
-    editing ? (catalogEntryFor(editing.service)?.price ?? "") : "",
   );
   const [notes, setNotes] = useState(editing?.notes ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -164,17 +219,30 @@ export function BookingSheet({
   const dayBookings = needsOwnFetch ? (otherDayBookings ?? []) : bookings;
   const dayBookingsLoading = needsOwnFetch && otherDayBookings === null;
 
-  /** A real service pre-fills its standard duration and price; both stay editable. */
-  function handleServiceChange(name: string) {
-    setService(name);
+  function updateEntry(key: string, patch: Partial<ServiceEntry>) {
+    setEntries((prev) => prev.map((e) => (e.key === key ? { ...e, ...patch } : e)));
     setError(null);
-    const entry = catalogEntryFor(name);
-    if (entry) {
-      setDurationMin(entry.durationMin);
-      setPrice(entry.price);
-    } else {
-      setPrice("");
-    }
+  }
+
+  /** A real service pre-fills its standard duration and price; both stay editable. */
+  function handleEntryServiceChange(key: string, name: string) {
+    const found = catalogEntryFor(name);
+    updateEntry(
+      key,
+      found ? { service: name, durationMin: found.durationMin, price: found.price } : { service: name, price: "" },
+    );
+  }
+
+  function addEntry() {
+    setEntries((prev) =>
+      prev.length >= MAX_SERVICES_PER_BOOKING ? prev : [...prev, emptyEntry(salon.slotMin)],
+    );
+    setError(null);
+  }
+
+  function removeEntry(key: string) {
+    setEntries((prev) => (prev.length > 1 ? prev.filter((e) => e.key !== key) : prev));
+    setError(null);
   }
 
   function requestClose() {
@@ -235,7 +303,31 @@ export function BookingSheet({
 
   const nowMin = bookingDate === today ? nowMinutesInSalonTz() : null;
   const isPastDay = bookingDate < today;
-  const resolvedService = service === CUSTOM_SERVICE ? customService.trim() : service;
+
+  // Each entry resolved to the name it will actually be saved under, its own
+  // duration, and its own price (blank means "not set", saved as 0).
+  const resolvedEntries = useMemo(
+    () =>
+      entries.map((e) => ({
+        service: (e.service === CUSTOM_SERVICE ? e.customService : e.service).trim(),
+        durationMin: e.durationMin,
+        price: e.price === "" ? 0 : e.price,
+      })),
+    [entries],
+  );
+  const totalDurationMin = resolvedEntries.reduce((sum, e) => sum + e.durationMin, 0);
+  const totalPrice = resolvedEntries.reduce((sum, e) => sum + e.price, 0);
+  const serviceLabel = resolvedEntries.map((e) => e.service).filter(Boolean).join(" + ");
+
+  /** Every entry's own slice of the day, back to back from a candidate start. */
+  function subSlots(fromMin: number) {
+    let cursor = fromMin;
+    return resolvedEntries.map((e) => {
+      const slot = { service: e.service, startMin: cursor, durationMin: e.durationMin };
+      cursor += e.durationMin;
+      return slot;
+    });
+  }
 
   const slots = useMemo(() => {
     const grid = slotsForSalon(salon);
@@ -251,29 +343,34 @@ export function BookingSheet({
       slotAvailability(
         salon,
         slots,
-        { durationMin, service: resolvedService },
+        { durationMin: totalDurationMin, service: serviceLabel },
         (s) =>
-          conflictsWithExisting(
-            { startMin: s, durationMin, service: resolvedService },
-            dayBookings,
-            editing?.id,
+          subSlots(s).some(
+            (slot) =>
+              slot.service &&
+              conflictsWithExisting(
+                { startMin: slot.startMin, durationMin: slot.durationMin, service: slot.service },
+                dayBookings,
+                editing?.id,
+              ),
           ),
         isPastDay ? 24 * 60 : nowMin,
       ),
-    [salon, slots, durationMin, resolvedService, dayBookings, editing?.id, isPastDay, nowMin],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [salon, slots, totalDurationMin, resolvedEntries, dayBookings, editing?.id, isPastDay, nowMin],
   );
 
   const selected = availability.find((s) => s.startMin === startMin);
   const selectedState: SlotAvailability["state"] = selected?.state ?? "free";
-  // An edit that leaves the time alone is never blocked by it: the booking
-  // keeps the slot it already holds, even if the hours or the clock have
-  // moved since. Only a new time, or a new service at that time, is checked.
+  // An edit that leaves the time and services alone is never blocked by it:
+  // the booking keeps the slot it already holds, even if the hours or the
+  // clock have moved since. Only a new time, or new services at that time,
+  // is checked.
   const timeChanged =
-    !editing || startMin !== editing.startMin || durationMin !== editing.durationMin;
-  const serviceChanged =
-    !editing || resolvedService.trim().toLowerCase() !== editing.service.trim().toLowerCase();
+    !editing || startMin !== editing.startMin || totalDurationMin !== editing.durationMin;
+  const servicesChanged = !editing || !sameServiceLines(resolvedEntries, editing.services);
   const blocksSubmit =
-    (selectedState === "taken" && (timeChanged || serviceChanged)) ||
+    (selectedState === "taken" && (timeChanged || servicesChanged)) ||
     (selectedState === "overflow" && timeChanged) ||
     (!editing && selectedState === "past") ||
     // A different day's availability is still on its way: the grid below is
@@ -283,15 +380,7 @@ export function BookingSheet({
   const nextFree = availability.find((s) => s.state === "free" && s.startMin > startMin)
     ?? availability.find((s) => s.state === "free");
 
-  // Same for a duration the owner set that is not one of the usual options.
-  const durations = useMemo(() => {
-    const options: number[] = [...DURATION_OPTIONS];
-    return options.includes(durationMin)
-      ? options
-      : [...options, durationMin].sort((a, b) => a - b);
-  }, [durationMin]);
-
-  const endMin = startMin + durationMin;
+  const endMin = startMin + totalDurationMin;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -311,8 +400,13 @@ export function BookingSheet({
       document.getElementById("clientPhone")?.focus();
       return;
     }
-    if (!resolvedService) {
-      setError(service === CUSTOM_SERVICE ? "Précisez le service." : "Choisissez un service.");
+    const emptyIndex = resolvedEntries.findIndex((e) => !e.service);
+    if (emptyIndex !== -1) {
+      setError(
+        entries[emptyIndex]?.service === CUSTOM_SERVICE
+          ? "Précisez le service."
+          : "Choisissez un service pour chaque ligne.",
+      );
       return;
     }
     if (blocksSubmit) return;
@@ -333,11 +427,10 @@ export function BookingSheet({
         const patch: Record<string, unknown> = {
           clientName: clientName.trim(),
           clientPhone: phone.e164,
-          service: resolvedService,
+          services: resolvedEntries,
           notes,
         };
         if (startMin !== editing.startMin) patch.startMin = startMin;
-        if (durationMin !== editing.durationMin) patch.durationMin = durationMin;
         res = await fetch(`/api/bookings/${editing.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -353,8 +446,7 @@ export function BookingSheet({
             clientPhone: phone.e164,
             bookingDate,
             startMin,
-            durationMin,
-            service: resolvedService,
+            services: resolvedEntries,
             notes,
             // Every booking comes through the call centre — the front-desk
             // "Réception" poste was removed (this salon has no reception).
@@ -398,11 +490,8 @@ export function BookingSheet({
         salonSlug: salon.slug,
         bookingDate: saved.bookingDate,
         startMin: saved.startMin,
-        durationMin: saved.durationMin,
-        service: saved.service,
-        price,
+        services: saved.services,
         notes: saved.notes,
-        catalog,
       });
       if (waTab && !waTab.closed) {
         waTab.location.href = confirmationUrl;
@@ -470,17 +559,15 @@ export function BookingSheet({
         salonSlug: salon.slug,
         bookingDate: editing.bookingDate,
         startMin: editing.startMin,
-        durationMin: editing.durationMin,
-        service: editing.service,
+        services: editing.services,
         notes: editing.notes,
-        catalog,
       })
     : null;
 
   const summaryTime = `${minutesToLabel(startMin)} à ${minutesToLabel(endMin)}`;
   const summaryDetail = [
-    formatDuration(durationMin),
-    price !== "" ? `${price} MAD` : null,
+    formatDuration(totalDurationMin),
+    totalPrice > 0 ? `${totalPrice} MAD` : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -501,21 +588,18 @@ export function BookingSheet({
         className="anim-sheet flex max-h-[94dvh] w-full flex-col overflow-hidden rounded-t-[20px] md:max-h-[min(860px,94dvh)] md:max-w-[900px] md:rounded-[20px]"
         style={{ background: "var(--surface)", boxShadow: "var(--shadow-sheet)" }}
       >
-        <div className="flex justify-center pt-2 md:hidden" aria-hidden>
+        <div className="flex justify-center pt-1.5 pb-0.5 md:hidden" aria-hidden>
           <span className="block h-1 w-9 rounded-full" style={{ background: "var(--line-strong)" }} />
         </div>
 
-        <div className="flex items-start gap-3 border-b px-5 pb-3 pt-3 md:px-6 md:pt-5" style={{ borderColor: "var(--line)" }}>
+        <div className="flex items-center justify-between gap-3 border-b px-4 py-1.5 md:px-6 md:py-2" style={{ borderColor: "var(--line)" }}>
           <div className="min-w-0 flex-1">
-            <h2 id="sheet-title" className="t-title">
+            <h2 id="sheet-title" className="text-[17px] font-semibold tracking-tight leading-tight md:text-[18px]" style={{ fontFamily: "var(--font-display)" }}>
               {editing ? "Modifier le rendez-vous" : "Nouveau rendez-vous"}
             </h2>
-            <p className="t-small truncate first-letter:uppercase" style={{ color: "var(--ink-faint)" }}>
-              {formatDayTitle(bookingDate, today)} · {salon.name}
-            </p>
           </div>
           {editing?.status === "done" ? (
-            <span className="chip chip-success mt-1 shrink-0">
+            <span className="chip chip-success shrink-0 py-0.5 text-[12px]">
               <Check size={13} />
               Terminé
             </span>
@@ -525,19 +609,19 @@ export function BookingSheet({
             onClick={requestClose}
             disabled={busy}
             aria-label="Fermer"
-            className="btn-icon -mr-2 -mt-1"
+            className="btn-icon -mr-1.5 h-8 w-8 min-h-[32px] md:h-8 md:w-8"
           >
-            <Close size={20} />
+            <Close size={18} />
           </button>
         </div>
 
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col" noValidate>
           <fieldset disabled={busy} className="contents">
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 md:px-6 md:py-5">
-              <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] md:gap-7">
-                {/* ---- Who and what ---- */}
-                <div className="flex flex-col gap-4">
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-1">
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-3.5 py-2.5 md:px-6 md:py-4">
+              <div className="grid gap-3 md:grid-cols-2 md:gap-7">
+                {/* ---- Left column: Client, Phone, Notes, Date, Start time ---- */}
+                <div className="flex flex-col gap-2.5 md:gap-4">
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 md:grid-cols-1 md:gap-4">
                     <div>
                       <label className="label" htmlFor="client_name">
                         Nom du client
@@ -552,9 +636,32 @@ export function BookingSheet({
                         onSelectClient={(client) => {
                           setClientName(client.name);
                           if (client.phone) setClientPhone(formatPhoneForDisplay(client.phone));
-                          // A returning client usually books what they had last time.
-                          const last = client.service ? catalogEntryFor(client.service) : undefined;
-                          if (!service && last) handleServiceChange(last.name);
+                          // A returning client usually books what they had
+                          // last time — every one of their services, not
+                          // just the first.
+                          const stillEmpty = entries.every((e) => !e.service);
+                          if (stillEmpty && client.services?.length) {
+                            setEntries(
+                              client.services.map((name) => {
+                                const found = catalogEntryFor(name);
+                                return found
+                                  ? {
+                                      key: nextEntryKey(),
+                                      service: found.name,
+                                      customService: "",
+                                      durationMin: found.durationMin,
+                                      price: found.price,
+                                    }
+                                  : {
+                                      key: nextEntryKey(),
+                                      service: CUSTOM_SERVICE,
+                                      customService: name,
+                                      durationMin: salon.slotMin,
+                                      price: "",
+                                    };
+                              }),
+                            );
+                          }
                         }}
                         required
                       />
@@ -581,108 +688,8 @@ export function BookingSheet({
                     </div>
                   </div>
 
-                  <div>
-                    <label className="label" htmlFor="service">
-                      Service
-                    </label>
-                    <SelectDropdown<string>
-                      id="service"
-                      value={service}
-                      onChange={handleServiceChange}
-                      placeholder="Choisir un service"
-                      searchable
-                      searchPlaceholder="Rechercher un service"
-                      groups={groups
-                        .map((group) => ({
-                          category: group.category,
-                          items: group.items.map((entry) => ({
-                            value: entry.name,
-                            label: entry.name,
-                            description: `${formatDuration(entry.durationMin)} · ${entry.price} MAD`,
-                          })),
-                        }))
-                        .concat([
-                          {
-                            category: "Autre",
-                            items: [
-                              {
-                                value: CUSTOM_SERVICE,
-                                label: CUSTOM_SERVICE,
-                                description: "Service hors catalogue",
-                              },
-                            ],
-                          },
-                        ])}
-                    />
-                  </div>
+                  <NotesField notes={notes} onChange={setNotes} />
 
-                  {service === CUSTOM_SERVICE ? (
-                    <div>
-                      <label className="label" htmlFor="customService">
-                        Précisez le service
-                      </label>
-                      <input
-                        id="customService"
-                        className="field"
-                        value={customService}
-                        onChange={(e) => {
-                          setCustomService(e.target.value);
-                          setError(null);
-                        }}
-                        maxLength={120}
-                        placeholder="Nom du service"
-                      />
-                    </div>
-                  ) : null}
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="label" htmlFor="durationMin">
-                        Durée
-                      </label>
-                      <SelectDropdown<number>
-                        id="durationMin"
-                        value={durationMin}
-                        onChange={(value) => {
-                          setDurationMin(value);
-                          setError(null);
-                        }}
-                        options={durations.map((d) => ({ value: d, label: formatDuration(d) }))}
-                      />
-                    </div>
-                    <div>
-                      <label className="label" htmlFor="price">
-                        Tarif
-                      </label>
-                      <div className="relative flex items-center">
-                        <input
-                          id="price"
-                          className="field pr-12"
-                          type="number"
-                          inputMode="numeric"
-                          min={0}
-                          step={1}
-                          value={price}
-                          onChange={(e) => setPrice(e.target.value === "" ? "" : Number(e.target.value))}
-                          placeholder="0"
-                        />
-                        <span
-                          className="pointer-events-none absolute right-3 text-[13px] font-semibold"
-                          style={{ color: "var(--ink-soft)" }}
-                        >
-                          MAD
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="hidden md:block">
-                    <NotesField notes={notes} onChange={setNotes} />
-                  </div>
-                </div>
-
-                {/* ---- When ---- */}
-                <div className="flex flex-col gap-3">
                   {!editing ? (
                     <div>
                       <span className="label" id="date-label">
@@ -699,67 +706,190 @@ export function BookingSheet({
                     </div>
                   ) : null}
 
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="label mb-0" id="time-label">
-                      Heure de début
-                    </span>
-                    <span className="t-small truncate" style={{ color: "var(--ink-faint)" }}>
-                      {dayBookingsLoading
-                        ? "Chargement du jour…"
-                        : resolvedService
-                          ? `Disponibilités pour ${formatDuration(durationMin)}`
-                          : "Choisissez un service pour affiner"}
-                    </span>
-                  </div>
-
-                  <TimeGrid
-                    availability={availability}
-                    value={startMin}
-                    editing={Boolean(editing)}
-                    onChange={(value) => {
-                      setStartMin(value);
-                      setError(null);
-                    }}
-                  />
-
-                  {isPastDay && !editing ? (
-                    <Advisory>Cette date est passée : il n&apos;est plus possible d&apos;y réserver.</Advisory>
-                  ) : selectedState === "taken" && (timeChanged || serviceChanged) ? (
-                    <Advisory tone="danger">
-                      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span>
-                          {minutesToLabel(startMin)} chevauche déjà{" "}
-                          {resolvedService ? `« ${resolvedService} »` : "un rendez-vous"}.
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="label mb-0" id="time-label">
+                        Heure de début
+                      </span>
+                      {dayBookingsLoading ? (
+                        <span className="t-small truncate" style={{ color: "var(--ink-faint)" }}>
+                          Chargement du jour…
                         </span>
-                        {nextFree ? (
+                      ) : serviceLabel ? (
+                        <span className="t-small truncate" style={{ color: "var(--ink-faint)" }}>
+                          Disponibilités pour {formatDuration(totalDurationMin)}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <TimeGrid
+                      availability={availability}
+                      value={startMin}
+                      editing={Boolean(editing)}
+                      onChange={(value) => {
+                        setStartMin(value);
+                        setError(null);
+                      }}
+                    />
+
+                    {isPastDay && !editing ? (
+                      <Advisory>Cette date est passée : il n&apos;est plus possible d&apos;y réserver.</Advisory>
+                    ) : selectedState === "taken" && (timeChanged || servicesChanged) ? (
+                      <Advisory tone="danger">
+                        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span>
+                            {minutesToLabel(startMin)} chevauche déjà{" "}
+                            {serviceLabel ? `« ${serviceLabel} »` : "un rendez-vous"}.
+                          </span>
+                          {nextFree ? (
+                            <button
+                              type="button"
+                              className="font-semibold underline underline-offset-2"
+                              onClick={() => setStartMin(nextFree.startMin)}
+                            >
+                              Prendre {minutesToLabel(nextFree.startMin)}
+                            </button>
+                          ) : null}
+                        </span>
+                      </Advisory>
+                    ) : selectedState === "overflow" && timeChanged ? (
+                      <Advisory tone="danger">
+                        Se termine après la fermeture ({minutesToLabel(salon.closesAtMin)}). Choisissez une heure plus tôt ou une durée plus courte.
+                      </Advisory>
+                    ) : selectedState === "past" && !editing ? (
+                      <Advisory tone="danger">Cette heure est déjà passée.</Advisory>
+                    ) : null}
+                  </div>
+                </div>
+
+                {/* ---- Right column: Services, Duration, Price, Add service ---- */}
+                <div className="flex flex-col gap-2 md:gap-3">
+                  {entries.map((entry, index) => (
+                    <div
+                      key={entry.key}
+                      className="relative flex flex-col gap-2 rounded-[10px] border p-2 md:gap-3 md:rounded-[12px] md:p-3"
+                      style={{ borderColor: "var(--line)", zIndex: entries.length - index }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <label className="label mb-0" htmlFor={`service-${entry.key}`}>
+                          {entries.length > 1 ? `Service ${index + 1}` : "Service"}
+                        </label>
+                        {entries.length > 1 ? (
                           <button
                             type="button"
-                            className="font-semibold underline underline-offset-2"
-                            onClick={() => setStartMin(nextFree.startMin)}
+                            className="btn-icon -mr-1 -mt-1 h-7 w-7"
+                            onClick={() => removeEntry(entry.key)}
+                            aria-label={`Retirer le service ${index + 1}`}
                           >
-                            Prendre {minutesToLabel(nextFree.startMin)}
+                            <Close size={15} />
                           </button>
                         ) : null}
-                      </span>
-                    </Advisory>
-                  ) : selectedState === "overflow" && timeChanged ? (
-                    <Advisory tone="danger">
-                      Se termine après la fermeture ({minutesToLabel(salon.closesAtMin)}). Choisissez une heure plus tôt ou une durée plus courte.
-                    </Advisory>
-                  ) : selectedState === "past" && !editing ? (
-                    <Advisory tone="danger">Cette heure est déjà passée.</Advisory>
-                  ) : null}
+                      </div>
+                      <SelectDropdown<string>
+                        id={`service-${entry.key}`}
+                        value={entry.service}
+                        onChange={(value) => handleEntryServiceChange(entry.key, value)}
+                        placeholder="Choisir un service"
+                        searchable
+                        searchPlaceholder="Rechercher un service"
+                        groups={groups
+                          .map((group) => ({
+                            category: group.category,
+                            items: group.items.map((catalogEntry) => ({
+                              value: catalogEntry.name,
+                              label: catalogEntry.name,
+                              description: `${formatDuration(catalogEntry.durationMin)} · ${catalogEntry.price} MAD`,
+                            })),
+                          }))
+                          .concat([
+                            {
+                              category: "Autre",
+                              items: [
+                                {
+                                  value: CUSTOM_SERVICE,
+                                  label: CUSTOM_SERVICE,
+                                  description: "Service hors catalogue",
+                                },
+                              ],
+                            },
+                          ])}
+                      />
 
-                  <div className="md:hidden">
-                    <NotesField notes={notes} onChange={setNotes} />
-                  </div>
+                      {entry.service === CUSTOM_SERVICE ? (
+                        <input
+                          className="field"
+                          value={entry.customService}
+                          onChange={(e) => updateEntry(entry.key, { customService: e.target.value })}
+                          maxLength={120}
+                          placeholder="Nom du service"
+                          aria-label="Précisez le service"
+                        />
+                      ) : null}
+
+                      <div className="grid grid-cols-2 gap-1.5 md:gap-3">
+                        <div>
+                          <label className="label" htmlFor={`durationMin-${entry.key}`}>
+                            Durée
+                          </label>
+                          <SelectDropdown<number>
+                            id={`durationMin-${entry.key}`}
+                            value={entry.durationMin}
+                            onChange={(value) => updateEntry(entry.key, { durationMin: value })}
+                            options={durationOptionsFor(entry.durationMin).map((d) => ({
+                              value: d,
+                              label: formatDuration(d),
+                            }))}
+                          />
+                        </div>
+                        <div>
+                          <label className="label" htmlFor={`price-${entry.key}`}>
+                            Tarif
+                          </label>
+                          <div className="relative flex items-center">
+                            <input
+                              id={`price-${entry.key}`}
+                              className="field pr-12"
+                              type="number"
+                              inputMode="numeric"
+                              min={0}
+                              step={1}
+                              value={entry.price}
+                              onChange={(e) =>
+                                updateEntry(entry.key, {
+                                  price: e.target.value === "" ? "" : Number(e.target.value),
+                                })
+                              }
+                              placeholder="0"
+                            />
+                            <span
+                              className="pointer-events-none absolute right-3 text-[13px] font-semibold"
+                              style={{ color: "var(--ink-soft)" }}
+                            >
+                              MAD
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  {entries.length < MAX_SERVICES_PER_BOOKING ? (
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm self-start"
+                      onClick={addEntry}
+                    >
+                      <Plus size={15} />
+                      Ajouter un service
+                    </button>
+                  ) : null}
                 </div>
               </div>
 
               {error ? (
                 <p
                   role="alert"
-                  className="t-small mt-4 rounded-[10px] px-3 py-2.5"
+                  className="t-small mt-3 rounded-[10px] px-2.5 py-2 md:mt-4 md:px-3 md:py-2.5"
                   style={{ background: "var(--danger-tint)", color: "var(--danger)" }}
                 >
                   {error}
@@ -769,7 +899,7 @@ export function BookingSheet({
 
             {/* Actions stay pinned, in the same place whether the form scrolls or not. */}
             <div
-              className="border-t px-5 pt-3 md:px-6 md:py-4"
+              className="border-t px-3.5 pt-2 md:px-6 md:py-4"
               style={{
                 borderColor: "var(--line)",
                 background: "var(--surface)",
@@ -780,21 +910,22 @@ export function BookingSheet({
                 <div className="min-w-0 md:flex-1">
                   <p className="truncate text-[14.5px] font-semibold" data-nums>
                     {summaryTime}
-                    {resolvedService ? <span style={{ color: "var(--ink-soft)" }}> · {resolvedService}</span> : null}
+                    {serviceLabel ? <span style={{ color: "var(--ink-soft)" }}> · {serviceLabel}</span> : null}
                   </p>
                   <p className="t-small truncate" style={{ color: "var(--ink-faint)" }} data-nums>
                     {summaryDetail}
                   </p>
                 </div>
 
-                {/* Phone: the save on its own full-width row, the status
-                    actions in equal columns under it. Wider: one row. */}
-                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 md:flex md:flex-nowrap md:items-center">
+                {/* Every action in one row, on a phone too — the save button
+                    used to claim its own row above the rest, which read as
+                    two decisions when it is one. */}
+                <div className="flex items-center gap-1 md:flex-nowrap md:gap-3">
                   {editing ? (
                     <>
                       <button
                         type="button"
-                        className={`btn-danger order-2 px-3 md:order-none ${confirmCancel ? "btn-confirm" : ""}`}
+                        className={`btn-danger order-2 min-w-0 flex-1 px-1.5 text-[13px] md:order-none md:flex-none md:px-3 md:text-[15px] ${confirmCancel ? "btn-confirm" : ""}`}
                         onClick={() => (confirmCancel ? mutateStatus("cancelled") : setConfirmCancel(true))}
                         aria-label={confirmCancel ? "Confirmer l'annulation" : "Annuler le rendez-vous"}
                       >
@@ -808,7 +939,7 @@ export function BookingSheet({
                           href={manualWhatsApp}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="btn-quiet order-3 w-11 px-0 md:order-none"
+                          className="btn-quiet order-3 w-11 shrink-0 px-0 md:order-none"
                           style={{ color: "var(--whatsapp)" }}
                           aria-label="Confirmer sur WhatsApp"
                           title="Confirmer sur WhatsApp"
@@ -821,7 +952,7 @@ export function BookingSheet({
                       {editing.status === "done" ? (
                         <button
                           type="button"
-                          className="btn-secondary order-1 px-3 md:order-none"
+                          className="btn-secondary order-1 min-w-0 flex-1 px-1.5 text-[13px] md:order-none md:flex-none md:px-3 md:text-[15px]"
                           onClick={() => mutateStatus("confirmed")}
                           title="Rétablir ce rendez-vous (non terminé)"
                         >
@@ -831,7 +962,7 @@ export function BookingSheet({
                       ) : (
                         <button
                           type="button"
-                          className="btn-secondary order-1 px-3 md:order-none"
+                          className="btn-secondary order-1 min-w-0 flex-1 px-1.5 text-[13px] md:order-none md:flex-none md:px-3 md:text-[15px]"
                           onClick={() => mutateStatus("done")}
                           title="Marquer comme terminé"
                         >
@@ -845,14 +976,16 @@ export function BookingSheet({
                   ) : null}
                   <button
                     type="submit"
-                    className="btn-primary order-first col-span-3 md:order-none md:min-w-[170px]"
+                    className="btn-primary order-first min-w-0 flex-1 px-1.5 text-[13px] md:order-none md:min-w-[170px] md:flex-none md:px-4 md:text-[15px]"
                     disabled={busy || blocksSubmit || (isPastDay && !editing)}
                   >
-                    {busy
-                      ? "Enregistrement…"
-                      : editing
-                        ? "Enregistrer"
-                        : `Réserver à ${minutesToLabel(startMin)}`}
+                    <span className="truncate">
+                      {busy
+                        ? "Enregistrement…"
+                        : editing
+                          ? "Enregistrer"
+                          : `Réserver à ${minutesToLabel(startMin)}`}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -862,17 +995,6 @@ export function BookingSheet({
       </div>
     </div>
   );
-}
-
-/** Opens the browser's own date picker: instant, native, accessible. */
-function openDatePicker(input: HTMLInputElement | null) {
-  if (!input) return;
-  try {
-    input.showPicker();
-  } catch {
-    input.focus();
-    input.click();
-  }
 }
 
 /**
@@ -895,12 +1017,30 @@ function DateField({
   const otherLabel = isOther ? formatShortDate(value) : "Choisir une date";
 
   const [open, setOpen] = useState(false);
+  const [placement, setPlacement] = useState<"top" | "bottom">("top");
   const popRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  const toggle = () => {
+    if (!open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const below = window.innerHeight - rect.bottom;
+      setPlacement(below < 320 || rect.top > below ? "top" : "bottom");
+    }
+    setOpen((o) => !o);
+  };
 
   useEffect(() => {
     if (!open) return;
     function handlePointer(event: MouseEvent) {
-      if (popRef.current && !popRef.current.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (
+        popRef.current &&
+        !popRef.current.contains(target) &&
+        !buttonRef.current?.contains(target)
+      ) {
+        setOpen(false);
+      }
     }
     function handleKey(event: KeyboardEvent) {
       if (event.key === "Escape") setOpen(false);
@@ -936,17 +1076,15 @@ function DateField({
 
       {/* Phone: the platform's own picker — a wheel it already knows, never
           fighting the touch keyboard. */}
-      <span className="relative inline-flex md:hidden">
-        <button
-          type="button"
+      <span className="relative inline-flex transition-transform active:scale-95 md:hidden">
+        <span
           role="radio"
-          className="time-chip flex items-center gap-1.5 px-3"
+          className="time-chip pointer-events-none flex items-center gap-1.5 px-3"
           aria-checked={isOther}
-          onClick={() => openDatePicker(inputRef.current)}
         >
           <CalendarIcon size={15} />
           <span data-nums>{otherLabel}</span>
-        </button>
+        </span>
         <input
           ref={inputRef}
           type="date"
@@ -956,22 +1094,28 @@ function DateField({
           onChange={(e) => {
             if (isValidDateString(e.target.value)) onChange(e.target.value);
           }}
-          className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
-          tabIndex={-1}
-          aria-hidden
+          onClick={(e) => {
+            try {
+              e.currentTarget.showPicker?.();
+            } catch {}
+          }}
+          className="absolute inset-0 z-10 h-full w-full cursor-pointer appearance-none text-[16px] opacity-0"
+          aria-label="Choisir une date"
         />
       </span>
 
       {/* Desktop: a proper calendar, not the OS's plain field-and-popup. */}
       <div className={`relative hidden md:inline-flex ${open ? "z-[var(--z-popover)]" : ""}`}>
         <button
+          ref={buttonRef}
           type="button"
           role="radio"
           className="time-chip flex items-center gap-1.5 px-3"
           aria-checked={isOther}
           aria-expanded={open}
           aria-haspopup="dialog"
-          onClick={() => setOpen((o) => !o)}
+          data-open={open ? "" : undefined}
+          onClick={toggle}
         >
           <CalendarIcon size={15} />
           <span data-nums>{otherLabel}</span>
@@ -981,7 +1125,9 @@ function DateField({
             ref={popRef}
             role="dialog"
             aria-label="Choisir une date"
-            className="popover absolute left-0 top-[calc(100%+6px)]"
+            className={`popover absolute right-0 z-[var(--z-popover)] shadow-2xl ${
+              placement === "top" ? "bottom-[calc(100%+6px)]" : "top-[calc(100%+6px)]"
+            }`}
           >
             <Calendar
               value={value}
@@ -1066,13 +1212,13 @@ function TimeGrid({
   }
 
   return (
-    <div role="radiogroup" aria-labelledby="time-label" className="flex flex-col gap-3">
+    <div role="radiogroup" aria-labelledby="time-label" className="flex flex-col gap-1.5 md:gap-3">
       {PERIODS.map((period) => {
         const items = shown.filter((s) => s.startMin >= period.from && s.startMin < period.to);
         if (items.length === 0) return null;
         return (
           <div key={period.label}>
-            <p className="mb-1.5 text-[12px] font-semibold" style={{ color: "var(--ink-soft)" }}>
+            <p className="mb-1 text-[11px] font-semibold md:text-[12px]" style={{ color: "var(--ink-soft)" }}>
               {period.label}
             </p>
             <div className="time-grid">
@@ -1140,7 +1286,7 @@ function Advisory({
   return (
     <div
       role={tone === "danger" ? "alert" : undefined}
-      className="t-small rounded-[10px] px-3 py-2.5"
+      className="t-small rounded-[10px] px-2.5 py-2 md:px-3 md:py-2.5"
       style={
         tone === "danger"
           ? { background: "var(--danger-tint)", color: "var(--danger)" }

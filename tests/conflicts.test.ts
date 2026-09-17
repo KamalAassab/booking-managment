@@ -24,7 +24,7 @@ const booking = (
   durationMin: number,
   status = "confirmed",
   service = "Coloration",
-) => ({ id, startMin, durationMin, status, service });
+) => ({ id, status, services: [{ service, startMin, durationMin }] });
 
 describe("rangesOverlap", () => {
   it("treats intervals as half-open so back-to-back bookings fit", () => {

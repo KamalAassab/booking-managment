@@ -1,7 +1,6 @@
 import { getSession } from "@/lib/auth";
 import { errorResponse, jsonNoStore, unauthorized } from "@/lib/api";
-import { getSalonBySlug, listBookingsInRange } from "@/lib/bookings";
-import { toBookingDTO } from "@/lib/types";
+import { getSalonBySlug, listBookingsInRange, toBookingDTOs } from "@/lib/bookings";
 import { rangeQuerySchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -36,7 +35,7 @@ export async function GET(request: Request) {
       parsed.data.from,
       parsed.data.to,
     );
-    return jsonNoStore({ bookings: rows.map(toBookingDTO) });
+    return jsonNoStore({ bookings: await toBookingDTOs(rows) });
   } catch (error) {
     return errorResponse(error, "GET /api/bookings/range");
   }

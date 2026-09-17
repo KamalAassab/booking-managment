@@ -8,7 +8,7 @@ import type { ClientSuggestion } from "@/lib/clients";
 type Props = {
   value: string;
   onChange: (name: string) => void;
-  onSelectClient: (client: { name: string; phone: string; service?: string }) => void;
+  onSelectClient: (client: { name: string; phone: string; services?: string[] }) => void;
   disabled?: boolean;
   inputRef?: React.RefObject<HTMLInputElement | null>;
   required?: boolean;
@@ -95,7 +95,7 @@ export function ClientCombobox({
   function handleSelect(item: ClientSuggestion) {
     typedRef.current = false;
     onChange(item.name);
-    onSelectClient({ name: item.name, phone: item.phone, service: item.lastService });
+    onSelectClient({ name: item.name, phone: item.phone, services: item.lastServices });
     setIsOpen(false);
     setActiveIndex(-1);
   }
@@ -122,7 +122,11 @@ export function ClientCombobox({
   }
 
   return (
-    <div ref={containerRef} className="relative w-full">
+    <div
+      ref={containerRef}
+      className={`relative w-full ${showSuggestions ? "z-[var(--z-popover)]" : ""}`}
+      style={{ zIndex: showSuggestions ? 90 : undefined }}
+    >
       <div className="relative flex items-center">
         <input
           ref={activeInputRef}
@@ -163,9 +167,10 @@ export function ClientCombobox({
           id={listboxId}
           role="listbox"
           aria-label="Clients existants"
-          className={`popover absolute left-0 right-0 max-h-[260px] overflow-y-auto overscroll-contain p-1.5 ${
+          className={`popover absolute left-0 right-0 z-[100] shadow-2xl max-h-[260px] overflow-y-auto overscroll-contain p-1.5 ${
             placement === "top" ? "bottom-[calc(100%+6px)]" : "top-[calc(100%+6px)]"
           }`}
+          style={{ zIndex: 100 }}
         >
           <p className="flex items-center justify-between px-2.5 pb-1 pt-0.5 text-[12px] font-medium" style={{ color: "var(--ink-faint)" }}>
             <span>Clients existants</span>

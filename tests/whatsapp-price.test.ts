@@ -5,8 +5,9 @@ import { buildConfirmationMessage, buildWhatsAppLink } from "@/lib/whatsapp";
 
 /**
  * The price line of the WhatsApp confirmation. The client reads this number
- * and turns up expecting to pay it, so it must be the price the agent saw —
- * the owner's live price, or what the agent typed — never a stale default.
+ * and turns up expecting to pay it, so it must be the price actually stored
+ * on the booking — each service's own price, summed — never a lookup that
+ * could disagree with what was saved.
  */
 
 const base = {
@@ -16,8 +17,7 @@ const base = {
   salonSlug: "vip",
   bookingDate: "2026-09-08",
   startMin: 870,
-  durationMin: 30,
-  service: "Manucure Simple",
+  services: [{ service: "Manucure Simple", durationMin: 30, price: 65 }],
 };
 
 const liveCatalog: ServiceCatalogEntry[] = [
@@ -26,32 +26,29 @@ const liveCatalog: ServiceCatalogEntry[] = [
 ];
 
 describe("confirmation price", () => {
-  it("quotes an explicit price exactly", () => {
-    expect(buildConfirmationMessage({ ...base, price: 120 })).toContain("120 MAD");
+  it("quotes the service's own stored price", () => {
+    expect(buildConfirmationMessage(base)).toContain("65 MAD");
   });
 
-  it("looks the price up in the live catalogue when one is given", () => {
-    const message = buildConfirmationMessage({ ...base, catalog: liveCatalog });
-    expect(message).toContain("65 MAD");
-    expect(message).not.toContain("50 MAD");
+  it("sums several services into one total, and lists them all", () => {
+    const message = buildConfirmationMessage({
+      ...base,
+      services: [
+        { service: "Coupe", durationMin: 30, price: 80 },
+        { service: "Coloration", durationMin: 60, price: 250 },
+      ],
+    });
+    expect(message).toContain("330 MAD");
+    expect(message).toContain("Coupe + Coloration");
   });
 
-  it("matches the catalogue however the service was capitalised or spaced", () => {
-    expect(buildConfirmationMessage({ ...base, service: " manucure simple ", catalog: liveCatalog })).toContain("65 MAD");
-  });
-
-  it("falls back to the static catalogue without a live one", () => {
-    expect(buildConfirmationMessage(base)).toContain("50 MAD");
-  });
-
-  it("carries no price when the agent cleared the field or the service is custom", () => {
-    expect(buildConfirmationMessage({ ...base, price: "" })).not.toContain("MAD");
-    expect(buildConfirmationMessage({ ...base, price: null })).not.toContain("MAD");
-    expect(buildConfirmationMessage({ ...base, service: "Coiffure mariée", catalog: liveCatalog })).not.toContain("MAD");
-  });
-
-  it("quotes a free service as 0 MAD rather than dropping the line", () => {
-    expect(buildConfirmationMessage({ ...base, price: 0 })).toContain("0 MAD");
+  it("carries no price line when every service is free", () => {
+    expect(
+      buildConfirmationMessage({
+        ...base,
+        services: [{ service: "Manucure Simple", durationMin: 30, price: 0 }],
+      }),
+    ).not.toContain("MAD");
   });
 });
 

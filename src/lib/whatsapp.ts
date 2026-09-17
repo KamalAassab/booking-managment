@@ -1,6 +1,6 @@
+import { formatDuration } from "./day-layout";
 import { formatLongDate, minutesToLabel } from "./time";
 import { waDigits } from "./phone";
-import { findCatalogEntry, getServicesForSalon, type ServiceCatalogEntry } from "./services-catalog";
 
 export type ConfirmationInput = {
   clientName: string;
@@ -9,17 +9,9 @@ export type ConfirmationInput = {
   salonSlug?: string;
   bookingDate: string;
   startMin: number;
-  durationMin?: number;
-  service: string;
-  /**
-   * A number is quoted as given. `undefined` means "look it up" — in
-   * `catalog` when one is supplied, otherwise in the static list. `null` or
-   * an empty string means the message carries no price.
-   */
-  price?: number | string | null;
+  /** One line per service, in run order — its own duration and price. */
+  services: { service: string; durationMin: number; price: number }[];
   notes?: string | null;
-  /** The salon's live catalogue (the owner's prices), when the caller has it. */
-  catalog?: ServiceCatalogEntry[];
 };
 
 /**
@@ -58,22 +50,9 @@ export function buildConfirmationMessage(b: ConfirmationInput): string {
   const firstName = b.clientName.trim().split(/\s+/)[0] || b.clientName.trim();
   const salonIcon = getSalonEmoji(b.salonName, b.salonSlug);
 
-  // Look the price up only when the caller did not decide it. The booking
-  // sheet passes the price shown in its Tarif field — possibly edited, or
-  // cleared on purpose — and that is what the client must be quoted.
-  let resolvedPrice = b.price;
-  if (resolvedPrice === undefined) {
-    const slug =
-      b.salonSlug ||
-      (b.salonName.toLowerCase().includes("gold")
-        ? "gold"
-        : b.salonName.toLowerCase().includes("silver") ||
-          b.salonName.toLowerCase().includes("barber")
-        ? "barber"
-        : "vip");
-    const found = findCatalogEntry(b.catalog ?? getServicesForSalon(slug), b.service);
-    resolvedPrice = found?.price;
-  }
+  const totalDuration = b.services.reduce((sum, s) => sum + s.durationMin, 0);
+  const totalPrice = b.services.reduce((sum, s) => sum + s.price, 0);
+  const serviceLabel = b.services.map((s) => s.service).join(" + ");
 
   const lines: string[] = [
     `Bonjour ${firstName} ${EMOJI_WAVE},`,
@@ -81,12 +60,12 @@ export function buildConfirmationMessage(b: ConfirmationInput): string {
     `Votre rendez-vous chez ${salonIcon} *${b.salonName}* est confirmé :`,
     "",
     `${EMOJI_CALENDAR} *Date :* ${formatLongDate(b.bookingDate)}`,
-    `${EMOJI_CLOCK} *Heure :* ${minutesToLabel(b.startMin)}${b.durationMin ? ` (${b.durationMin} min)` : ""}`,
-    `${EMOJI_SCISSORS} *Prestation :* ${b.service}`,
+    `${EMOJI_CLOCK} *Heure :* ${minutesToLabel(b.startMin)}${totalDuration ? ` (${formatDuration(totalDuration)})` : ""}`,
+    `${EMOJI_SCISSORS} *Prestation${b.services.length > 1 ? "s" : ""} :* ${serviceLabel}`,
   ];
 
-  if (resolvedPrice !== undefined && resolvedPrice !== null && resolvedPrice !== "") {
-    lines.push(`${EMOJI_MONEY} *Tarif :* ${Number(resolvedPrice).toLocaleString("fr-MA")} MAD`);
+  if (totalPrice > 0) {
+    lines.push(`${EMOJI_MONEY} *Tarif :* ${totalPrice.toLocaleString("fr-MA")} MAD`);
   }
 
   if (b.notes && b.notes.trim()) {

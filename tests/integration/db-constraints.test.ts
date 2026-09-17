@@ -4,7 +4,15 @@ import { afterAll, beforeEach, expect, it } from "vitest";
 import { bookings, salons } from "@/db/schema";
 import { isCheckViolation, isSlotConflictError, pgErrorCode } from "@/lib/db-errors";
 
-import { db, describeIfDb, insertBookingRaw, makeSalon } from "../helpers/db";
+import {
+  db,
+  describeIfDb,
+  insertBookingRaw,
+  makeSalon,
+  moveBookingRaw,
+  setBookingServiceRaw,
+  setBookingStatusRaw,
+} from "../helpers/db";
 import { closeDb, findDoubleBookings, resetWithRealSalons } from "../helpers/fixtures";
 
 /**
@@ -101,7 +109,7 @@ describeIfDb("database: double-booking exclusion constraint", () => {
 
   it("frees the slot as soon as a booking is cancelled", async () => {
     const first = await insertBookingRaw({ salonId: vipId, bookingDate: DAY, startMin: 600, service: "Coupe" });
-    await db.update(bookings).set({ status: "cancelled" }).where(eq(bookings.id, first.id));
+    await setBookingStatusRaw(first.id, "cancelled");
     await insertBookingRaw({ salonId: vipId, bookingDate: DAY, startMin: 600, service: "Coupe" });
   });
 
@@ -122,25 +130,19 @@ describeIfDb("database: double-booking exclusion constraint", () => {
   it("refuses to revive a cancelled booking onto minutes someone else now holds", async () => {
     const old = await insertBookingRaw({ salonId: vipId, bookingDate: DAY, startMin: 600, service: "Coupe", status: "cancelled" });
     await insertBookingRaw({ salonId: vipId, bookingDate: DAY, startMin: 600, service: "Coupe" });
-    await expectConflict(
-      db.update(bookings).set({ status: "confirmed" }).where(eq(bookings.id, old.id)),
-    );
+    await expectConflict(setBookingStatusRaw(old.id, "confirmed"));
   });
 
   it("refuses to move a booking onto another booking of the same service", async () => {
     await insertBookingRaw({ salonId: vipId, bookingDate: DAY, startMin: 600, service: "Coupe" });
     const other = await insertBookingRaw({ salonId: vipId, bookingDate: DAY, startMin: 720, service: "Coupe" });
-    await expectConflict(
-      db.update(bookings).set({ startMin: 600 }).where(eq(bookings.id, other.id)),
-    );
+    await expectConflict(moveBookingRaw(other.id, 600));
   });
 
   it("refuses to change a booking's service into one already booked at that time", async () => {
     await insertBookingRaw({ salonId: vipId, bookingDate: DAY, startMin: 600, service: "Coupe" });
     const other = await insertBookingRaw({ salonId: vipId, bookingDate: DAY, startMin: 600, service: "Brushing" });
-    await expectConflict(
-      db.update(bookings).set({ service: "Coupe" }).where(eq(bookings.id, other.id)),
-    );
+    await expectConflict(setBookingServiceRaw(other.id, "Coupe"));
   });
 
   it("treats service names that differ only by case or spaces as the same service", async () => {
@@ -244,9 +246,11 @@ describeIfDb("database: row guards", () => {
   });
 
   it("has the exclusion constraint installed with the expected shape", async () => {
+    // The guarantee lives on booking_services, one row per service, not on
+    // bookings itself — see db/schema.ts.
     const result = await db.execute(sql`
       select pg_get_constraintdef(oid) as def from pg_constraint
-      where conname = 'bookings_no_overlap' and contype = 'x'
+      where conname = 'booking_services_no_overlap' and contype = 'x'
     `);
     const def = ((result as unknown as { rows: { def: string }[] }).rows[0]?.def ?? "");
     expect(def).toContain("salon_id WITH =");

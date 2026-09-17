@@ -31,6 +31,7 @@ const owner = () => new UserClient("owner", inProcessTransport, sessionCookie("o
 const anonymous = () => new UserClient("anonymous", inProcessTransport, null);
 
 const DAY = futureDate(9);
+const DEFAULT_SERVICE = "Manucure Simple";
 
 const input = (overrides: Record<string, unknown> = {}) =>
   bookingInput({ bookingDate: DAY, ...overrides });
@@ -130,7 +131,10 @@ describeIfDb("POST /api/bookings", () => {
     expect(res.body.whatsappUrl).toMatch(/^https:\/\/api\.whatsapp\.com\/send\?phone=212612345678&text=/);
     // The DTO must not leak audit columns.
     expect(Object.keys(res.body.booking ?? {}).sort()).toEqual(
-      ["bookingDate", "channel", "clientName", "clientPhone", "durationMin", "id", "notes", "salonId", "service", "startMin", "status"].sort(),
+      [
+        "bookingDate", "channel", "clientName", "clientPhone", "durationMin", "id", "notes",
+        "salonId", "serviceLabel", "services", "startMin", "status",
+      ].sort(),
     );
   });
 
@@ -299,8 +303,7 @@ describeIfDb("PATCH /api/bookings/[id]", () => {
       clientName: "  Nadia Alaoui ",
       clientPhone: "07 12 34 56 78",
       startMin: 720,
-      durationMin: 60,
-      service: "Pédicure SPA",
+      services: [{ service: "Pédicure SPA", durationMin: 60 }],
       notes: "après",
     });
     expect(res.status).toBe(200);
@@ -309,7 +312,7 @@ describeIfDb("PATCH /api/bookings/[id]", () => {
       clientPhone: "+212712345678",
       startMin: 720,
       durationMin: 60,
-      service: "Pédicure SPA",
+      serviceLabel: "Pédicure SPA",
       notes: "après",
     });
   });
@@ -320,8 +323,7 @@ describeIfDb("PATCH /api/bookings/[id]", () => {
       clientName: booking.clientName,
       clientPhone: booking.clientPhone,
       startMin: booking.startMin,
-      durationMin: booking.durationMin,
-      service: booking.service,
+      services: booking.services,
       notes: "",
     });
     expect(res.status).toBe(200);
@@ -343,13 +345,16 @@ describeIfDb("PATCH /api/bookings/[id]", () => {
     ["an impossible date", { bookingDate: "2030-02-31" }],
     ["a one-letter name", { clientName: "B" }],
     ["an invalid phone", { clientPhone: "0000" }],
-    ["a blank service", { service: "  " }],
+    ["a blank service", { services: [{ service: "  ", durationMin: 30 }] }],
     ["an unknown status", { status: "archived" }],
     ["a start before opening", { startMin: 540 }],
     ["a start off the grid", { startMin: 645 }],
-    ["a duration past closing", { durationMin: 480 }],
-    ["start and duration past midnight", { startMin: 1430, durationMin: 60 }],
-    ["a duration below the minimum", { durationMin: 4 }],
+    ["a duration past closing", { services: [{ service: DEFAULT_SERVICE, durationMin: 480 }] }],
+    [
+      "start and duration past midnight",
+      { startMin: 1430, services: [{ service: DEFAULT_SERVICE, durationMin: 60 }] },
+    ],
+    ["a duration below the minimum", { services: [{ service: DEFAULT_SERVICE, durationMin: 4 }] }],
   ];
 
   it.each(invalidPatch)("answers 400 for %s", async (_name, patch) => {
@@ -533,7 +538,7 @@ describeIfDb("no request shape produces a 500", () => {
       "9999-99-99", [], {}, [1, 2], { $gt: "" }, "x".repeat(5000), "🙂", " ", "' OR 1=1 --",
       600, 30, 1439, 1440, 480, 481, 4, "call_center", "front_desk",
     ];
-    const keys = ["salonSlug", "clientName", "clientPhone", "bookingDate", "startMin", "durationMin", "service", "notes", "channel", "status"];
+    const keys = ["salonSlug", "clientName", "clientPhone", "bookingDate", "startMin", "services", "notes", "channel", "status"];
     for (let i = 0; i < 400; i += 1) {
       const body: Record<string, unknown> = input({ bookingDate: futureDate(random.int(2, 30)) });
       for (const key of keys) {
@@ -551,7 +556,7 @@ describeIfDb("no request shape produces a 500", () => {
     const created = await user.create(input());
     const realId = created.body.booking!.id;
     const values: unknown[] = [null, "", "done", "cancelled", "confirmed", 0, 600, 1440, -5, 4, 481, "2030-01-01", "x", [], {}, "0612345678", "Nom Valide"];
-    const keys = ["clientName", "clientPhone", "bookingDate", "startMin", "durationMin", "service", "notes", "status"];
+    const keys = ["clientName", "clientPhone", "bookingDate", "startMin", "services", "notes", "status"];
     for (let i = 0; i < 200; i += 1) {
       const patch: Record<string, unknown> = {};
       for (const key of keys) if (random.chance(0.35)) patch[key] = random.pick(values);

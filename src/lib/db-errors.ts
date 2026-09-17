@@ -242,13 +242,21 @@ export function isSlotConflictError(error: unknown): boolean {
     return true;
   }
   // Belt and braces: if a future driver ever stops exposing the SQLSTATE, the
-  // constraint name still identifies this unambiguously.
+  // constraint name still identifies this unambiguously. The guarantee now
+  // lives on booking_services (one row per service), not on bookings itself.
   const constraint = pgConstraintName(error);
-  if (constraint === "bookings_slot_unique" || constraint === "bookings_no_overlap") {
+  if (
+    constraint === "booking_services_slot_unique" ||
+    constraint === "booking_services_no_overlap" ||
+    constraint === "bookings_slot_unique" ||
+    constraint === "bookings_no_overlap"
+  ) {
     return true;
   }
   const message = pgErrorMessage(error);
   return (
+    message.includes("booking_services_slot_unique") ||
+    message.includes("booking_services_no_overlap") ||
     message.includes("bookings_slot_unique") ||
     message.includes("bookings_no_overlap")
   );

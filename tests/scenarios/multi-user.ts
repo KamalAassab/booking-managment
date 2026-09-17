@@ -133,7 +133,7 @@ export function defineMultiUserScenarios(label: string, baseTransport: Transport
       const results = await Promise.all(
         users.map((u, i) => u.create(input({ startMin: 630, service: services[i] }))),
       );
-      const won = results.filter((r) => r.status === 201).map((r) => r.body.booking!.service).sort();
+      const won = results.filter((r) => r.status === 201).map((r) => r.body.booking!.serviceLabel).sort();
       expect(won).toEqual(["Manucure Simple", "Pédicure SPA"]);
       expect(count(results, 409)).toBe(3);
     });
@@ -539,8 +539,7 @@ export function defineMultiUserScenarios(label: string, baseTransport: Transport
         clientPhone: random.chance(0.04) ? random.pick(["123", "06 12"]) : random.chance(0.3) ? "+212 6 12 34 56 78" : nextPhone(),
         bookingDate: random.chance(0.03) ? random.pick(["2020-01-01", "2030-02-30"]) : random.pick(dates),
         startMin: salon.opensAtMin - 30 + random.int(0, Math.floor((salon.closesAtMin - salon.opensAtMin + 30) / 15)) * 15,
-        durationMin: random.pick(DURATIONS),
-        service: random.pick(SERVICES),
+        services: [{ service: random.pick(SERVICES), durationMin: random.pick(DURATIONS) }],
         channel: random.pick(["call_center", "front_desk"]),
       };
       if (random.chance(0.3)) body.notes = random.pick(["", "  note  ", "allergie"]);
@@ -550,9 +549,8 @@ export function defineMultiUserScenarios(label: string, baseTransport: Transport
     function randomPatch(random: ReturnType<typeof prng>, dates: string[]) {
       const patch: Record<string, unknown> = {};
       if (random.chance(0.3)) patch.startMin = 540 + random.int(-2, 30) * 15;
-      if (random.chance(0.2)) patch.durationMin = random.pick(DURATIONS);
+      if (random.chance(0.25)) patch.services = [{ service: random.pick(SERVICES), durationMin: random.pick(DURATIONS) }];
       if (random.chance(0.1)) patch.bookingDate = random.pick(dates);
-      if (random.chance(0.15)) patch.service = random.pick(SERVICES);
       if (random.chance(0.25)) patch.status = random.pick(["confirmed", "done", "cancelled"]);
       if (random.chance(0.15)) patch.notes = random.pick(["", "modifiée"]);
       if (random.chance(0.1)) patch.clientName = random.pick(["Nouveau Nom", "Z"]);

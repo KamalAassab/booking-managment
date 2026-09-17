@@ -1,8 +1,8 @@
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { describe } from "vitest";
 
 import { db, resetDb } from "@/db";
-import { bookings, salons, users } from "@/db/schema";
+import { bookingServices, bookings, salons, users } from "@/db/schema";
 
 /**
  * Integration-test plumbing.
@@ -32,7 +32,7 @@ export async function truncateAll(): Promise<void> {
     throw new Error("truncateAll() refused: DATABASE_URL is not the test database.");
   }
   await db.execute(
-    sql`TRUNCATE TABLE ${bookings}, ${salons}, ${users} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE TABLE ${bookingServices}, ${bookings}, ${salons}, ${users} RESTART IDENTITY CASCADE`,
   );
 }
 
@@ -89,7 +89,13 @@ export async function makeUser(
   return rows[0];
 }
 
-/** Raw insert that bypasses the application layer, to test the DB directly. */
+/**
+ * Raw insert that bypasses the application layer, to test the DB directly.
+ *
+ * Two plain inserts, not the app's atomic single-statement write: this
+ * helper exists to poke the database's own constraints directly, one test at
+ * a time, so the lack of a cross-statement transaction is not a concern here.
+ */
 export async function insertBookingRaw(values: {
   salonId: string;
   bookingDate?: string;
@@ -99,21 +105,72 @@ export async function insertBookingRaw(values: {
   clientName?: string;
   clientPhone?: string;
   service?: string;
+  price?: number;
 }) {
+  const bookingDate = values.bookingDate ?? "2026-06-01";
+  const durationMin = values.durationMin ?? 30;
+  const status = values.status ?? "confirmed";
+  const service = values.service ?? "Coupe";
+
   const rows = await db
     .insert(bookings)
     .values({
       salonId: values.salonId,
       clientName: values.clientName ?? "Client Test",
       clientPhone: values.clientPhone ?? "+212612345678",
-      bookingDate: values.bookingDate ?? "2026-06-01",
+      bookingDate,
       startMin: values.startMin,
-      durationMin: values.durationMin ?? 30,
-      service: values.service ?? "Coupe",
-      status: values.status ?? "confirmed",
+      durationMin,
+      status,
     })
     .returning();
-  return rows[0];
+  const booking = rows[0];
+
+  await db.insert(bookingServices).values({
+    bookingId: booking.id,
+    salonId: values.salonId,
+    bookingDate,
+    status,
+    service,
+    startMin: values.startMin,
+    durationMin,
+    price: values.price ?? 0,
+    sortOrder: 0,
+  });
+
+  return booking;
+}
+
+/**
+ * Mirrors what cancelBooking/updateBooking do to a booking's status, but as
+ * two plain statements rather than the app's one atomic write — for testing
+ * the raw constraint's reaction, the same way insertBookingRaw does.
+ */
+export async function setBookingStatusRaw(
+  id: string,
+  status: "confirmed" | "cancelled" | "done",
+): Promise<void> {
+  await db.update(bookings).set({ status }).where(eq(bookings.id, id));
+  await db.update(bookingServices).set({ status }).where(eq(bookingServices.bookingId, id));
+}
+
+/** Mirrors moving a booking's start time: every service's own slice shifts with it. */
+export async function moveBookingRaw(id: string, nextStartMin: number): Promise<void> {
+  const [booking] = await db.select().from(bookings).where(eq(bookings.id, id));
+  const delta = nextStartMin - booking.startMin;
+  await db.update(bookings).set({ startMin: nextStartMin }).where(eq(bookings.id, id));
+  const lines = await db.select().from(bookingServices).where(eq(bookingServices.bookingId, id));
+  for (const line of lines) {
+    await db
+      .update(bookingServices)
+      .set({ startMin: line.startMin + delta })
+      .where(eq(bookingServices.id, line.id));
+  }
+}
+
+/** Mirrors renaming the (single) service on a booking. */
+export async function setBookingServiceRaw(id: string, service: string): Promise<void> {
+  await db.update(bookingServices).set({ service }).where(eq(bookingServices.bookingId, id));
 }
 
 export { db, resetDb };

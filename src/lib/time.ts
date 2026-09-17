@@ -173,18 +173,19 @@ export function rangesOverlap(
 }
 
 /**
- * Checks if a candidate booking collides with an existing booking.
- * Note: Different services at the same salon/time are permitted concurrently.
- * A conflict only occurs when the same service overlaps the same time range.
+ * Checks if one candidate service collides with an existing booking's
+ * services. Note: Different services at the same salon/time are permitted
+ * concurrently. A conflict only occurs when the same service overlaps the
+ * same time range — each existing booking is checked service by service,
+ * since an appointment with several services occupies one chair per service,
+ * not one chair for its whole span.
  */
 export function conflictsWithExisting(
   candidate: { startMin: number; durationMin: number; service?: string },
   existing: Array<{
     id: string;
-    startMin: number;
-    durationMin: number;
-    service?: string;
     status: string;
+    services: Array<{ service: string; startMin: number; durationMin: number }>;
   }>,
   ignoreBookingId?: string,
 ): boolean {
@@ -192,14 +193,11 @@ export function conflictsWithExisting(
     (b) =>
       b.status !== "cancelled" &&
       b.id !== ignoreBookingId &&
-      (!candidate.service ||
-        !b.service ||
-        candidate.service.trim().toLowerCase() === b.service.trim().toLowerCase()) &&
-      rangesOverlap(
-        candidate.startMin,
-        candidate.durationMin,
-        b.startMin,
-        b.durationMin,
+      b.services.some(
+        (s) =>
+          (!candidate.service ||
+            candidate.service.trim().toLowerCase() === s.service.trim().toLowerCase()) &&
+          rangesOverlap(candidate.startMin, candidate.durationMin, s.startMin, s.durationMin),
       ),
   );
 }

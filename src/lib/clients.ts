@@ -4,8 +4,10 @@ import { desc, eq, ilike, or } from "drizzle-orm";
 
 import { db } from "@/db";
 import { bookings, salons } from "@/db/schema";
+import { loadServicesFor } from "./bookings";
 import { formatPhoneForDisplay } from "./phone";
 import { todayInSalonTz } from "./time";
+import { formatServiceLabel } from "./types";
 
 export type ClientSummary = {
   clientName: string;
@@ -40,7 +42,10 @@ export type ClientSuggestion = {
   phone: string;
   formattedPhone: string;
   totalBookings: number;
+  /** For display. */
   lastService: string;
+  /** For prefilling a new booking's service lines, one entry per service. */
+  lastServices: string[];
 };
 
 /**
@@ -55,7 +60,6 @@ export async function listAllClients(): Promise<ClientSummary[]> {
       bookingDate: bookings.bookingDate,
       startMin: bookings.startMin,
       durationMin: bookings.durationMin,
-      service: bookings.service,
       status: bookings.status,
       salonId: bookings.salonId,
       salonName: salons.name,
@@ -65,6 +69,9 @@ export async function listAllClients(): Promise<ClientSummary[]> {
     .from(bookings)
     .leftJoin(salons, eq(bookings.salonId, salons.id))
     .orderBy(desc(bookings.bookingDate), desc(bookings.startMin));
+
+  const serviceLabels = await loadServicesFor(allBookings.map((b) => b.id));
+  const labelFor = (bookingId: string) => formatServiceLabel(serviceLabels.get(bookingId) ?? []);
 
   // Group by clientPhone (or clientName if phone empty)
   const map = new Map<string, {
@@ -98,7 +105,7 @@ export async function listAllClients(): Promise<ClientSummary[]> {
         confirmedBookings: 0,
         cancelledBookings: 0,
         lastBookingDate: b.bookingDate,
-        lastService: b.service,
+        lastService: labelFor(b.id),
         lastVisitDate: null,
         nextBooking: null,
         salonsSet: new Set<string>(),
@@ -120,7 +127,7 @@ export async function listAllClients(): Promise<ClientSummary[]> {
       if (b.bookingDate < today || (b.bookingDate === today && b.status === "done")) {
         existing.lastVisitDate ??= b.bookingDate;
       } else if (b.status === "confirmed") {
-        existing.nextBooking = { bookingDate: b.bookingDate, startMin: b.startMin, service: b.service };
+        existing.nextBooking = { bookingDate: b.bookingDate, startMin: b.startMin, service: labelFor(b.id) };
       }
     }
 
@@ -130,7 +137,7 @@ export async function listAllClients(): Promise<ClientSummary[]> {
         bookingDate: b.bookingDate,
         startMin: b.startMin,
         durationMin: b.durationMin,
-        service: b.service,
+        service: labelFor(b.id),
         status: b.status,
         salonName: b.salonName ?? "Salon",
         salonSlug: b.salonSlug ?? "vip",
@@ -182,9 +189,9 @@ export async function searchClientSuggestions(query: string): Promise<ClientSugg
 
   const raw = await db
     .select({
+      id: bookings.id,
       clientName: bookings.clientName,
       clientPhone: bookings.clientPhone,
-      service: bookings.service,
       bookingDate: bookings.bookingDate,
     })
     .from(bookings)
@@ -198,6 +205,8 @@ export async function searchClientSuggestions(query: string): Promise<ClientSugg
     .orderBy(desc(bookings.bookingDate))
     .limit(50);
 
+  const serviceLabels = await loadServicesFor(raw.map((r) => r.id));
+
   const seen = new Map<string, ClientSuggestion>();
   for (const r of raw) {
     const key = r.clientPhone.trim() || r.clientName.trim().toLowerCase();
@@ -205,12 +214,14 @@ export async function searchClientSuggestions(query: string): Promise<ClientSugg
     if (existing) {
       existing.totalBookings++;
     } else {
+      const lines = serviceLabels.get(r.id) ?? [];
       seen.set(key, {
         name: r.clientName,
         phone: r.clientPhone,
         formattedPhone: formatPhoneForDisplay(r.clientPhone),
         totalBookings: 1,
-        lastService: r.service,
+        lastService: formatServiceLabel(lines),
+        lastServices: lines.map((l) => l.service),
       });
     }
   }

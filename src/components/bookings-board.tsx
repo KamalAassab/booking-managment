@@ -119,7 +119,7 @@ function bookingMatcher(query: string): ((booking: BookingDTO) => boolean) | nul
   const digits = query.replace(/\D/g, "");
   return (booking) => {
     if (withoutAccents(booking.clientName).includes(text)) return true;
-    if (withoutAccents(booking.service).includes(text)) return true;
+    if (withoutAccents(booking.serviceLabel).includes(text)) return true;
     if (digits.length < 2) return false;
     const stored = booking.clientPhone.replace(/\D/g, "");
     const national = stored.startsWith("212") ? `0${stored.slice(3)}` : stored;
@@ -850,7 +850,7 @@ export function BookingsBoard({
         />
 
         <main
-          className={`flex w-full flex-1 flex-col px-4 pb-[calc(9rem+env(safe-area-inset-bottom))] pt-3 md:px-6 md:pb-6 md:pt-4 lg:min-h-0 ${
+          className={`flex w-full flex-1 flex-col px-3 pb-[calc(9rem+env(safe-area-inset-bottom))] pt-2 md:px-6 md:pb-6 md:pt-4 lg:min-h-0 ${
             view === "day" ? "lg:overflow-hidden" : "lg:overflow-y-auto"
           }`}
         >
@@ -863,7 +863,6 @@ export function BookingsBoard({
                   today={today}
                   nowMin={nowMin}
                   bookings={active}
-                  catalog={catalog}
                   matches={matches}
                   loading={dayLoading}
                   sheetOpen={dialog !== null}
@@ -871,7 +870,7 @@ export function BookingsBoard({
                   onSelectBooking={selectBooking}
                 />
                 <aside
-                  className="hidden w-[300px] shrink-0 overflow-y-auto overscroll-contain pb-1 xl:block"
+                  className="hidden w-[260px] shrink-0 overflow-y-auto overscroll-contain pb-1 xl:block"
                   aria-label="Résumé et prochains rendez-vous"
                 >
                   <DayRail
@@ -910,7 +909,6 @@ export function BookingsBoard({
                   today={today}
                   nowMin={nowMin}
                   bookings={active}
-                  catalog={catalog}
                   matches={matches}
                   query={query}
                   loading={dayLoading}

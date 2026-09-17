@@ -33,7 +33,7 @@ export function LoginForm({ initialRole }: { initialRole: "staff" | "owner" }) {
       >
         {(
           [
-            ["staff", "Centre d'appels", Phone],
+            ["staff", "Agent", Phone],
             ["owner", "Propriétaire", OwnerAvatarIcon],
           ] as const
         ).map(([value, label, Icon]) => (

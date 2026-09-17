@@ -79,16 +79,11 @@ export const salons = pgTable(
 );
 
 /**
- * Reservations.
- *
- * Overlap prevention is enforced in the database, not in application code, so
- * two devices sharing the same account cannot both win the same slot (brief
- * §3, "zero-delay double-booking prevention"). The constraint itself is a
- * GiST exclusion constraint added in the migrations — Drizzle cannot express
- * `EXCLUDE USING gist` yet, so see drizzle/0005_service_case_insensitive.sql.
- * It rejects any two non-cancelled bookings in the same salon, on the same
- * day, for the same service (compared ignoring case and surrounding spaces),
- * whose [start, start + duration) minute ranges intersect.
+ * Reservations. One row per appointment; the services it covers live in
+ * `bookingServices` below. `durationMin` here is the sum of those services'
+ * own durations — the whole visit's block on the calendar — kept in sync by
+ * application code because every write to a booking rewrites its services in
+ * the same statement (see lib/bookings.ts).
  */
 export const bookings = pgTable(
   "bookings",
@@ -104,8 +99,8 @@ export const bookings = pgTable(
     bookingDate: date("booking_date").notNull(),
     /** Minutes from midnight, salon-local. 14:30 => 870. */
     startMin: integer("start_min").notNull(),
+    /** Sum of this booking's services' durations. */
     durationMin: integer("duration_min").notNull().default(30),
-    service: varchar("service", { length: 120 }).notNull(),
     notes: text("notes"),
     status: bookingStatus("status").notNull().default("confirmed"),
     /** Intake channel, not a person — kept anonymous per brief §3. */
@@ -122,25 +117,15 @@ export const bookings = pgTable(
     index("bookings_salon_date_idx").on(t.salonId, t.bookingDate, t.startMin),
     // Drives the live-update watermark without a table scan.
     index("bookings_updated_at_idx").on(t.updatedAt),
-    // Redundant with the exclusion constraint for equal start times, but kept
-    // as a cheap second line of defence and a clearer error for the common
-    // "two agents picked the same slot" collision.
-    uniqueIndex("bookings_slot_unique")
-      .on(t.salonId, t.bookingDate, sql`lower(btrim(${t.service}))`, t.startMin)
-      .where(sql`status <> 'cancelled'`),
     check("bookings_start_min_range", sql`${t.startMin} BETWEEN 0 AND 1439`),
     check("bookings_duration_positive", sql`${t.durationMin} > 0`),
-    // A booking must end on the day it starts. Without this, a 23:00 booking
-    // of two hours produces int4range(1380, 1500) — a range the exclusion
-    // constraint compares only against *the same* booking_date, so the two
-    // hours it really occupies on the following morning are invisible to it
-    // and can be double-booked.
+    // A booking must end on the day it starts — mirrors the same rule on
+    // each of its services (bookings_services_within_day).
     check(
       "bookings_within_day",
       sql`${t.startMin} + ${t.durationMin} <= 1440`,
     ),
     check("bookings_client_name_present", sql`length(btrim(${t.clientName})) > 0`),
-    check("bookings_service_present", sql`length(btrim(${t.service})) > 0`),
   ],
 );
 
@@ -148,6 +133,78 @@ export type Salon = typeof salons.$inferSelect;
 export type Booking = typeof bookings.$inferSelect;
 export type NewBooking = typeof bookings.$inferInsert;
 export type User = typeof users.$inferSelect;
+
+/**
+ * One line item of a booking: a single service, with its own slice of the
+ * visit's time and its own price. A booking with three services has three
+ * rows here, back to back, in `sortOrder`.
+ *
+ * Overlap prevention is enforced in the database, not in application code
+ * (brief §3, "zero-delay double-booking prevention"), and it is *per
+ * service*: a service name is a stand-in for the one chair/station that does
+ * it, so two different services may run at the same time in the same salon,
+ * but the same service cannot be double-booked. The constraint itself is a
+ * GiST exclusion constraint added in the migrations — Drizzle cannot express
+ * `EXCLUDE USING gist` yet, so see drizzle/0007_booking_services.sql. It
+ * rejects any two non-cancelled service rows in the same salon, on the same
+ * day, for the same service (compared ignoring case and surrounding spaces),
+ * whose [start, start + duration) minute ranges intersect.
+ *
+ * `salonId`, `bookingDate` and `status` are copies of the parent booking's
+ * own columns, not a separate source of truth: the exclusion constraint above
+ * needs them on this table to compare rows without a join, and every write
+ * that touches a booking's services rewrites all of them in the same
+ * statement as the parent row (see lib/bookings.ts), so the two can never
+ * drift apart.
+ */
+export const bookingServices = pgTable(
+  "booking_services",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    bookingId: uuid("booking_id")
+      .notNull()
+      .references(() => bookings.id, { onDelete: "cascade" }),
+    salonId: uuid("salon_id")
+      .notNull()
+      .references(() => salons.id, { onDelete: "restrict" }),
+    bookingDate: date("booking_date").notNull(),
+    status: bookingStatus("status").notNull().default("confirmed"),
+    service: varchar("service", { length: 120 }).notNull(),
+    /** Minutes from midnight, salon-local — this service's own slice. */
+    startMin: integer("start_min").notNull(),
+    durationMin: integer("duration_min").notNull(),
+    /** MAD, this service's own price — the booking's total is their sum. */
+    price: integer("price").notNull().default(0),
+    /** Order the services run in, and the order they are shown in. */
+    sortOrder: smallint("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("booking_services_booking_idx").on(t.bookingId),
+    // Redundant with the exclusion constraint for equal start times, but kept
+    // as a cheap second line of defence and a clearer error for the common
+    // "two agents picked the same slot" collision.
+    uniqueIndex("booking_services_slot_unique")
+      .on(t.salonId, t.bookingDate, sql`lower(btrim(${t.service}))`, t.startMin)
+      .where(sql`status <> 'cancelled'`),
+    check("booking_services_start_min_range", sql`${t.startMin} BETWEEN 0 AND 1439`),
+    check("booking_services_duration_positive", sql`${t.durationMin} > 0`),
+    // A service must end on the day it starts, for the same reason as
+    // bookings_within_day: the exclusion constraint below compares ranges
+    // only within the same booking_date.
+    check(
+      "booking_services_within_day",
+      sql`${t.startMin} + ${t.durationMin} <= 1440`,
+    ),
+    check("booking_services_price_non_negative", sql`${t.price} >= 0`),
+    check("booking_services_service_present", sql`length(btrim(${t.service})) > 0`),
+  ],
+);
+
+export type BookingServiceRow = typeof bookingServices.$inferSelect;
+export type NewBookingServiceRow = typeof bookingServices.$inferInsert;
 
 /**
  * Per-salon service catalogue.

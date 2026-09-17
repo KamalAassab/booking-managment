@@ -8,7 +8,6 @@ import {
   type BookingPhase,
 } from "@/lib/day-layout";
 import { formatPhoneForDisplay } from "@/lib/phone";
-import { findCatalogEntry, type ServiceCatalogEntry } from "@/lib/services-catalog";
 import { minutesToLabel } from "@/lib/time";
 import type { BookingDTO, SalonDTO } from "@/lib/types";
 import { buildWhatsAppLink } from "@/lib/whatsapp";
@@ -32,11 +31,13 @@ const PHASE_WORDS: Record<BookingPhase, string> = {
 /** The whole booking as one sentence, for screen readers and tooltips. */
 export function describeBooking(booking: BookingDTO, phase: BookingPhase): string {
   const end = minutesToLabel(booking.startMin + booking.durationMin);
-  return `${minutesToLabel(booking.startMin)} à ${end}, ${booking.clientName}, ${booking.service}, ${PHASE_WORDS[phase]}`;
+  return `${minutesToLabel(booking.startMin)} à ${end}, ${booking.clientName}, ${booking.serviceLabel}, ${PHASE_WORDS[phase]}`;
 }
 
-function priceOf(booking: BookingDTO, catalog: readonly ServiceCatalogEntry[]) {
-  return findCatalogEntry(catalog, booking.service)?.price;
+/** Each service already carries its own price — no catalogue lookup needed. */
+function priceOf(booking: BookingDTO): number | undefined {
+  const total = booking.services.reduce((sum, s) => sum + s.price, 0);
+  return total > 0 ? total : undefined;
 }
 
 function DoneMark({ size = 14 }: { size?: number }) {
@@ -58,17 +59,15 @@ function DoneMark({ size = 14 }: { size?: number }) {
 export function TimelineBooking({
   booking,
   phase,
-  catalog,
   nowMin,
   onSelect,
 }: {
   booking: BookingDTO;
   phase: BookingPhase;
-  catalog: readonly ServiceCatalogEntry[];
   nowMin: number;
   onSelect: () => void;
 }) {
-  const price = priceOf(booking, catalog);
+  const price = priceOf(booking);
   const end = booking.startMin + booking.durationMin;
   const label = describeBooking(booking, phase);
 
@@ -102,7 +101,7 @@ export function TimelineBooking({
         <span className="truncate">{booking.clientName}</span>
       </span>
       <span className="bk-line">
-        {booking.service}
+        {booking.serviceLabel}
         {price !== undefined ? (
           <span className="bk-wide" data-nums>
             {" "}· {price} MAD
@@ -128,18 +127,16 @@ export function AgendaBooking({
   booking,
   phase,
   salon,
-  catalog,
   nowMin,
   onSelect,
 }: {
   booking: BookingDTO;
   phase: BookingPhase;
   salon: SalonDTO;
-  catalog: readonly ServiceCatalogEntry[];
   nowMin: number;
   onSelect: () => void;
 }) {
-  const price = priceOf(booking, catalog);
+  const price = priceOf(booking);
   const end = booking.startMin + booking.durationMin;
   // The confirmation is worth one tap only while it can still matter.
   const whatsapp =
@@ -151,10 +148,8 @@ export function AgendaBooking({
           salonSlug: salon.slug,
           bookingDate: booking.bookingDate,
           startMin: booking.startMin,
-          durationMin: booking.durationMin,
-          service: booking.service,
+          services: booking.services,
           notes: booking.notes,
-          catalog: [...catalog],
         })
       : null;
 
@@ -174,7 +169,7 @@ export function AgendaBooking({
           ) : null}
         </span>
         <span className="bk-line">
-          {booking.service}
+          {booking.serviceLabel}
           <span data-nums>
             {" "}· {formatDuration(booking.durationMin)}
             {price !== undefined ? ` · ${price} MAD` : ""}
@@ -238,14 +233,12 @@ export function AgendaRow({
   booking,
   phase,
   salon,
-  catalog,
   nowMin,
   onSelect,
 }: {
   booking: BookingDTO;
   phase: BookingPhase;
   salon: SalonDTO;
-  catalog: readonly ServiceCatalogEntry[];
   nowMin: number;
   onSelect: () => void;
 }) {
@@ -259,10 +252,8 @@ export function AgendaRow({
           salonSlug: salon.slug,
           bookingDate: booking.bookingDate,
           startMin: booking.startMin,
-          durationMin: booking.durationMin,
-          service: booking.service,
+          services: booking.services,
           notes: booking.notes,
-          catalog: [...catalog],
         })
       : null;
 
@@ -296,7 +287,7 @@ export function AgendaRow({
               an ellipsis, and the service is what the desk reads. The price
               is in the sheet, one tap away. */}
           <span className="truncate">
-            {booking.service}
+            {booking.serviceLabel}
             <span data-nums>
               {" "}· {formatDuration(booking.durationMin)}
             </span>
@@ -371,7 +362,7 @@ export function CompactBooking({
           {phase === "done" ? <DoneMark size={13} /> : null}
           <span className="truncate">{booking.clientName}</span>
         </span>
-        <span className="bk-line text-[12px]">{booking.service}</span>
+        <span className="bk-line text-[12px]">{booking.serviceLabel}</span>
       </span>
       {figure ? (
         <span

@@ -83,9 +83,7 @@ describe("wa.me link", () => {
     salonSlug: "vip",
     bookingDate: "2026-09-08",
     startMin: 870,
-    durationMin: 90,
-    service: "Coloration",
-    price: 350,
+    services: [{ service: "Coloration", durationMin: 90, price: 350 }],
     notes: "Client fidèle",
   };
 
@@ -101,7 +99,7 @@ describe("wa.me link", () => {
     expect(message).toContain("Salma");
     expect(message).toContain("👑 *L'Atelier VIP*");
     expect(message).toContain("14:30");
-    expect(message).toContain("(90 min)");
+    expect(message).toContain("(1 h 30)");
     expect(message).toContain("Coloration");
     expect(message).toContain("350 MAD");
     expect(message).toContain("Client fidèle");
@@ -135,7 +133,7 @@ describe("wa.me link", () => {
     expect(silverMsg).toContain("💈 *L'Atelier Silver*");
   });
 
-  it("resolves catalog price when price is not provided", () => {
+  it("quotes the stored price with no catalogue lookup involved", () => {
     const msg = buildConfirmationMessage({
       clientName: "Mehdi",
       clientPhone: "0661000000",
@@ -143,7 +141,7 @@ describe("wa.me link", () => {
       salonSlug: "barber",
       bookingDate: "2026-09-10",
       startMin: 600,
-      service: "Coupe Simple",
+      services: [{ service: "Coupe Simple", durationMin: 25, price: 40 }],
     });
     expect(msg).toContain("40 MAD");
     expect(msg).toContain("💈 *L'Atelier Silver*");

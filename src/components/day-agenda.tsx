@@ -10,7 +10,6 @@ import {
   formatDuration,
   freeWindows,
 } from "@/lib/day-layout";
-import type { ServiceCatalogEntry } from "@/lib/services-catalog";
 import { minutesToLabel } from "@/lib/time";
 import type { BookingDTO, SalonDTO } from "@/lib/types";
 
@@ -21,7 +20,6 @@ type Props = {
   nowMin: number;
   /** The day's bookings, cancelled ones already removed. */
   bookings: BookingDTO[];
-  catalog: readonly ServiceCatalogEntry[];
   /** Ids matching the search box, or null when nothing is searched. */
   matches: Set<string> | null;
   query: string;
@@ -60,7 +58,6 @@ export function DayAgenda({
   today,
   nowMin,
   bookings,
-  catalog,
   matches,
   query,
   loading,
@@ -386,7 +383,6 @@ export function DayAgenda({
                               booking={booking}
                               phase={bookingPhase(booking, today, nowMin)}
                               salon={salon}
-                              catalog={catalog}
                               nowMin={nowMin}
                               onSelect={() => onSelectBooking(booking)}
                             />

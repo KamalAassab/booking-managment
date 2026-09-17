@@ -87,8 +87,9 @@ export function BoardHeader(props: Props) {
   return (
     <>
       {/* Phone: salon choice scrolls away with the page; the date controls
-          below stay pinned. */}
-      <div className="flex flex-col gap-2 px-4 pb-1 pt-3 md:hidden">
+          below stay pinned. Kept deliberately tight — every pixel of chrome
+          here is one less row of the day visible without scrolling. */}
+      <div className="flex flex-col gap-1.5 px-3 pb-1 pt-2 md:hidden">
         <div className="flex items-center gap-2">
           <div className="min-w-0 flex-1">
             <SalonSwitcher
@@ -104,7 +105,7 @@ export function BoardHeader(props: Props) {
       </div>
 
       <header
-        className="sticky top-0 z-[20] border-b px-4 pb-2.5 pt-2.5 md:px-6 md:py-3"
+        className="sticky top-0 z-[20] border-b px-3 pb-1.5 pt-1.5 md:px-6 md:py-3"
         style={{
           borderColor: "var(--line)",
           background: "color-mix(in srgb, var(--paper) 92%, transparent)",
@@ -148,8 +149,8 @@ export function BoardHeader(props: Props) {
         </div>
 
         {/* ---- phone ---------------------------------------------------- */}
-        <div className="flex flex-col gap-2.5 md:hidden">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-1.5 md:hidden">
+          <div className="flex items-center gap-1.5">
             <button
               type="button"
               className="btn-icon"
@@ -159,10 +160,10 @@ export function BoardHeader(props: Props) {
               <ChevronLeft size={20} />
             </button>
             <DatePickerLabel date={date} onPick={props.onNavigate}>
-              <span className="block truncate text-[16px] font-semibold leading-5 first-letter:uppercase">
+              <span className="block truncate text-[15px] font-semibold leading-[18px] first-letter:uppercase">
                 {title}
               </span>
-              <span className="block truncate text-[12.5px] leading-4" style={{ color: "var(--ink-faint)" }}>
+              <span className="block truncate text-[11.5px] leading-[14px]" style={{ color: "var(--ink-faint)" }}>
                 {[relative, phoneDetail].filter(Boolean).join(" · ")}
               </span>
             </DatePickerLabel>

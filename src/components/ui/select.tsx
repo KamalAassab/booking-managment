@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { Check, ChevronDown, Search } from "@/components/icons";
 
@@ -56,14 +57,27 @@ export function SelectDropdown<T = string | number>({
   className = "",
 }: SelectDropdownProps<T>) {
   const [isOpen, setIsOpen] = useState(false);
-  const [placement, setPlacement] = useState<"bottom" | "top">("bottom");
+  const [mounted, setMounted] = useState(false);
+  const [coords, setCoords] = useState<{
+    top?: number;
+    bottom?: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+    placement: "top" | "bottom";
+  } | null>(null);
   const [search, setSearch] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const listboxId = useId();
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const allOptions: SelectOption<T>[] = useMemo(() => {
     if (groups) return groups.flatMap((g) => g.items.map((item) => ({ ...item, group: g.category })));
@@ -83,13 +97,40 @@ export function SelectDropdown<T = string | number>({
     );
   }, [allOptions, search]);
 
+  function updateCoords() {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const viewportHeight = window.innerHeight;
+    const viewportWidth = window.innerWidth;
+
+    const spaceBelow = viewportHeight - rect.bottom;
+    const spaceAbove = rect.top;
+
+    // Prefer opening towards where there is more space, or top if below is tight (<280px)
+    const preferTop = (spaceBelow < 280 && spaceAbove > spaceBelow) || (spaceBelow < 200 && spaceAbove > 160);
+    const chosenPlacement: "top" | "bottom" = preferTop ? "top" : "bottom";
+    const availableSpace = chosenPlacement === "top" ? spaceAbove : spaceBelow;
+    const maxHeight = Math.min(340, Math.max(160, availableSpace - 16));
+
+    const width = Math.min(viewportWidth - 16, Math.max(160, rect.width));
+    let left = rect.left;
+    if (left + width > viewportWidth - 8) {
+      left = Math.max(8, viewportWidth - width - 8);
+    }
+
+    setCoords({
+      top: chosenPlacement === "bottom" ? rect.bottom + 6 : undefined,
+      bottom: chosenPlacement === "top" ? viewportHeight - rect.top + 6 : undefined,
+      left,
+      width,
+      maxHeight,
+      placement: chosenPlacement,
+    });
+  }
+
   function open() {
     if (disabled) return;
-    if (containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      const below = window.innerHeight - rect.bottom;
-      setPlacement(below < 300 && rect.top > below ? "top" : "bottom");
-    }
+    updateCoords();
     setActiveIndex(Math.max(0, allOptions.findIndex((o) => o.value === value)));
     setIsOpen(true);
   }
@@ -107,10 +148,37 @@ export function SelectDropdown<T = string | number>({
 
   useEffect(() => {
     if (!isOpen) return;
+
+    function handleScrollOrResize() {
+      if (!triggerRef.current) return;
+      const rect = triggerRef.current.getBoundingClientRect();
+      if (rect.bottom < 0 || rect.top > window.innerHeight) {
+        close();
+        return;
+      }
+      updateCoords();
+    }
+
+    window.addEventListener("resize", handleScrollOrResize);
+    window.addEventListener("scroll", handleScrollOrResize, true);
+
+    return () => {
+      window.removeEventListener("resize", handleScrollOrResize);
+      window.removeEventListener("scroll", handleScrollOrResize, true);
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
     function handleClickOutside(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-        setSearch("");
+      const target = event.target as Node;
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(target) &&
+        popoverRef.current &&
+        !popoverRef.current.contains(target)
+      ) {
+        close();
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -158,6 +226,8 @@ export function SelectDropdown<T = string | number>({
 
   const renderOption = (opt: SelectOption<T>, index: number) => {
     const isSelected = opt.value === value;
+    const descParts = opt.description ? opt.description.split(" · ") : null;
+
     return (
       <button
         key={String(opt.value)}
@@ -170,21 +240,48 @@ export function SelectDropdown<T = string | number>({
         onMouseDown={(e) => e.preventDefault()}
         onMouseMove={() => setActiveIndex(index)}
         onClick={() => pick(opt)}
-        className="option"
+        className="option py-2 px-3"
       >
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate" style={{ fontWeight: isSelected ? 600 : 500, color: "var(--ink)" }}>
+        <span className="flex min-w-0 flex-1 items-center justify-between gap-3">
+          <span
+            className="truncate text-[13.5px]"
+            style={{ fontWeight: isSelected ? 600 : 500, color: "var(--ink)" }}
+          >
             {opt.label}
           </span>
-          {opt.description ? (
-            <span className="truncate text-[12.5px]" style={{ color: "var(--ink-faint)" }} data-nums>
+          {descParts && descParts.length === 2 ? (
+            <span className="flex shrink-0 items-center gap-1.5 text-[12px]" data-nums>
+              <span
+                className="rounded-[5px] px-1.5 py-0.5 font-medium"
+                style={{
+                  background: "var(--surface-sunk)",
+                  color: "var(--ink-soft)",
+                }}
+              >
+                {descParts[0]}
+              </span>
+              <span
+                className="font-semibold"
+                style={{
+                  color: isSelected ? "var(--accent-ink)" : "var(--ink)",
+                }}
+              >
+                {descParts[1]}
+              </span>
+            </span>
+          ) : opt.description ? (
+            <span
+              className="shrink-0 text-[12px] font-medium"
+              style={{ color: "var(--ink-faint)" }}
+              data-nums
+            >
               {opt.description}
             </span>
           ) : null}
         </span>
         {isSelected ? (
-          <span className="shrink-0" style={{ color: "var(--accent-ink)" }}>
-            <Check size={16} />
+          <span className="shrink-0 ml-1" style={{ color: "var(--accent-ink)" }}>
+            <Check size={15} />
           </span>
         ) : null}
       </button>
@@ -198,6 +295,7 @@ export function SelectDropdown<T = string | number>({
     <div
       ref={containerRef}
       className={`relative w-full ${isOpen ? "z-[var(--z-popover)]" : ""} ${className}`}
+      style={{ zIndex: isOpen ? 90 : undefined }}
     >
       {name ? <input type="hidden" name={name} value={String(value)} /> : null}
 
@@ -270,71 +368,82 @@ export function SelectDropdown<T = string | number>({
         </span>
       </button>
 
-      {isOpen ? (
-        <div
-          className={`popover absolute left-0 right-0 flex max-h-[min(360px,60dvh)] flex-col overflow-hidden ${
-            placement === "top" ? "bottom-[calc(100%+6px)]" : "top-[calc(100%+6px)]"
-          }`}
-          onKeyDown={onListKeyDown}
-        >
-          {searchable ? (
-            <div className="border-b p-1.5" style={{ borderColor: "var(--line)" }}>
-              <div className="relative flex items-center">
-                <span className="pointer-events-none absolute left-3" style={{ color: "var(--ink-faint)" }}>
-                  <Search size={15} />
-                </span>
-                <input
-                  ref={searchInputRef}
-                  type="search"
-                  value={search}
-                  onChange={(e) => {
-                    setSearch(e.target.value);
-                    setActiveIndex(0);
-                  }}
-                  placeholder={searchPlaceholder}
-                  aria-label={searchPlaceholder}
-                  aria-controls={listboxId}
-                  aria-activedescendant={activeIndex >= 0 ? `${listboxId}-${activeIndex}` : undefined}
-                  autoComplete="off"
-                  className="field min-h-[40px] py-2 pl-9"
-                />
-              </div>
-            </div>
-          ) : null}
-
-          <div
-            ref={listRef}
-            id={listboxId}
-            role="listbox"
-            tabIndex={searchable ? undefined : -1}
-            aria-activedescendant={!searchable && activeIndex >= 0 ? `${listboxId}-${activeIndex}` : undefined}
-            className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5 outline-none"
-          >
-            {filteredOptions.length === 0 ? (
-              <p className="px-3 py-4 text-center text-[13.5px]" style={{ color: "var(--ink-faint)" }}>
-                Aucun résultat.
-              </p>
-            ) : groups ? (
-              Array.from(
-                filteredOptions.reduce((map, opt) => {
-                  const key = opt.group ?? "Autres";
-                  map.set(key, [...(map.get(key) ?? []), opt]);
-                  return map;
-                }, new Map<string, SelectOption<T>[]>()),
-              ).map(([category, items]) => (
-                <div key={category} role="group" aria-label={category} className="pb-1">
-                  <p className="px-3 pb-1 pt-2 text-[12px] font-semibold" style={{ color: "var(--ink-soft)" }}>
-                    {category}
-                  </p>
-                  {items.map((opt) => renderOption(opt, running++))}
+      {mounted && isOpen && coords && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              className="popover flex flex-col overflow-hidden shadow-2xl"
+              style={{
+                position: "fixed",
+                left: `${coords.left}px`,
+                width: `${coords.width}px`,
+                top: coords.top !== undefined ? `${coords.top}px` : undefined,
+                bottom: coords.bottom !== undefined ? `${coords.bottom}px` : undefined,
+                maxHeight: `${coords.maxHeight}px`,
+                zIndex: 99999,
+              }}
+              onKeyDown={onListKeyDown}
+            >
+              {searchable ? (
+                <div className="border-b p-1.5" style={{ borderColor: "var(--line)" }}>
+                  <div className="relative flex items-center">
+                    <span className="pointer-events-none absolute left-3" style={{ color: "var(--ink-faint)" }}>
+                      <Search size={15} />
+                    </span>
+                    <input
+                      ref={searchInputRef}
+                      type="search"
+                      value={search}
+                      onChange={(e) => {
+                        setSearch(e.target.value);
+                        setActiveIndex(0);
+                      }}
+                      placeholder={searchPlaceholder}
+                      aria-label={searchPlaceholder}
+                      aria-controls={listboxId}
+                      aria-activedescendant={activeIndex >= 0 ? `${listboxId}-${activeIndex}` : undefined}
+                      autoComplete="off"
+                      className="field min-h-[40px] py-2 pl-9"
+                    />
+                  </div>
                 </div>
-              ))
-            ) : (
-              filteredOptions.map((opt) => renderOption(opt, running++))
-            )}
-          </div>
-        </div>
-      ) : null}
+              ) : null}
+
+              <div
+                ref={listRef}
+                id={listboxId}
+                role="listbox"
+                tabIndex={searchable ? undefined : -1}
+                aria-activedescendant={!searchable && activeIndex >= 0 ? `${listboxId}-${activeIndex}` : undefined}
+                className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5 outline-none"
+              >
+                {filteredOptions.length === 0 ? (
+                  <p className="px-3 py-4 text-center text-[13.5px]" style={{ color: "var(--ink-faint)" }}>
+                    Aucun résultat.
+                  </p>
+                ) : groups ? (
+                  Array.from(
+                    filteredOptions.reduce((map, opt) => {
+                      const key = opt.group ?? "Autres";
+                      map.set(key, [...(map.get(key) ?? []), opt]);
+                      return map;
+                    }, new Map<string, SelectOption<T>[]>()),
+                  ).map(([category, items]) => (
+                    <div key={category} role="group" aria-label={category} className="pb-1">
+                      <p className="px-3 pb-1 pt-2 text-[12px] font-semibold" style={{ color: "var(--ink-soft)" }}>
+                        {category}
+                      </p>
+                      {items.map((opt) => renderOption(opt, running++))}
+                    </div>
+                  ))
+                ) : (
+                  filteredOptions.map((opt) => renderOption(opt, running++))
+                )}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

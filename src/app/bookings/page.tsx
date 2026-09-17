@@ -3,12 +3,12 @@ import { redirect } from "next/navigation";
 import { BookingsBoard } from "@/components/bookings-board";
 import { SetupNotice } from "@/components/setup-notice";
 import { requireSession } from "@/lib/auth";
-import { getSalonBySlug, listBookings, listSalons } from "@/lib/bookings";
+import { getSalonBySlug, listBookings, listSalons, toBookingDTOs } from "@/lib/bookings";
 import { setupNoticeFor } from "@/lib/page-errors";
 import { catalogsForSalons } from "@/lib/services";
 import { getServicesForSalon } from "@/lib/services-catalog";
 import { isValidDateString, todayInSalonTz } from "@/lib/time";
-import { toBookingDTO, toSalonDTO } from "@/lib/types";
+import { toSalonDTO } from "@/lib/types";
 import type { Salon } from "@/db/schema";
 
 export const dynamic = "force-dynamic";
@@ -73,7 +73,7 @@ export default async function BookingsPage({
       salons={salons.map(toSalonDTO)}
       salon={toSalonDTO(salon)}
       date={date}
-      initialBookings={bookings.map(toBookingDTO)}
+      initialBookings={await toBookingDTOs(bookings)}
       catalogs={catalogs}
       role={session.role}
     />

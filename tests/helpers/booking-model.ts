@@ -7,7 +7,7 @@ import {
   rangesOverlap,
   todayInSalonTz,
 } from "@/lib/time";
-import type { BookingDTO } from "@/lib/types";
+import type { BookingDTO, BookingServiceDTO } from "@/lib/types";
 
 /**
  * An independent, in-memory statement of the booking rules.
@@ -34,6 +34,7 @@ type Outcome =
 
 const STATUSES = ["confirmed", "cancelled", "done"] as const;
 const CHANNELS = ["call_center", "front_desk"] as const;
+const MAX_SERVICES_PER_BOOKING = 8;
 
 function isInt(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v);
@@ -46,6 +47,45 @@ function textOk(v: unknown, min: number, max: number): v is string {
 /** Same service means the same chair, however staff capitalised or spaced it. */
 export function serviceKey(service: string): string {
   return service.trim().toLowerCase();
+}
+
+type ServiceLineInput = { service: string; durationMin: number; price: number };
+
+/** Validates a raw `services` field into trimmed, typed lines, or null. */
+function validateServiceLines(v: unknown): ServiceLineInput[] | null {
+  if (!Array.isArray(v) || v.length < 1 || v.length > MAX_SERVICES_PER_BOOKING) return null;
+  const lines: ServiceLineInput[] = [];
+  for (const raw of v) {
+    if (typeof raw !== "object" || raw === null) return null;
+    const r = raw as Record<string, unknown>;
+    if (!textOk(r.service, 1, 120)) return null;
+    if (!(isInt(r.durationMin) && r.durationMin >= 5 && r.durationMin <= 480)) return null;
+    if (r.price !== undefined && !(isInt(r.price) && r.price >= 0 && r.price <= 100_000)) return null;
+    lines.push({
+      service: (r.service as string).trim(),
+      durationMin: r.durationMin as number,
+      price: (r.price as number | undefined) ?? 0,
+    });
+  }
+  return lines;
+}
+
+/** Every line back to back from `startMin`. */
+function placeServiceLines(startMin: number, lines: readonly ServiceLineInput[]): BookingServiceDTO[] {
+  let cursor = startMin;
+  return lines.map((l) => {
+    const line: BookingServiceDTO = { service: l.service, startMin: cursor, durationMin: l.durationMin, price: l.price };
+    cursor += l.durationMin;
+    return line;
+  });
+}
+
+function totalDuration(lines: readonly { durationMin: number }[]): number {
+  return lines.reduce((sum, l) => sum + l.durationMin, 0);
+}
+
+function joinServiceLabel(lines: readonly { service: string }[]): string {
+  return lines.map((l) => l.service).join(" + ");
 }
 
 export class BookingModel {
@@ -73,13 +113,16 @@ export class BookingModel {
     if (candidate.status === "cancelled") return false;
     for (const other of this.bookings.values()) {
       if (other.id === candidate.id || other.status === "cancelled") continue;
-      if (
-        other.salonId === candidate.salonId &&
-        other.bookingDate === candidate.bookingDate &&
-        serviceKey(other.service) === serviceKey(candidate.service) &&
-        rangesOverlap(candidate.startMin, candidate.durationMin, other.startMin, other.durationMin)
-      ) {
-        return true;
+      if (other.salonId !== candidate.salonId || other.bookingDate !== candidate.bookingDate) continue;
+      for (const cs of candidate.services) {
+        for (const os of other.services) {
+          if (
+            serviceKey(os.service) === serviceKey(cs.service) &&
+            rangesOverlap(cs.startMin, cs.durationMin, os.startMin, os.durationMin)
+          ) {
+            return true;
+          }
+        }
       }
     }
     return false;
@@ -89,21 +132,21 @@ export class BookingModel {
   predictCreate(body: Record<string, unknown>): Outcome {
     const today = todayInSalonTz();
     const b = body;
+    const lines = validateServiceLines(b.services);
     if (
       !(typeof b.salonSlug === "string" && b.salonSlug.length >= 1 && b.salonSlug.length <= 24) ||
       !textOk(b.clientName, 2, 120) ||
       !textOk(b.clientPhone, 1, 32) ||
       !isValidDateString(b.bookingDate) ||
       !(isInt(b.startMin) && b.startMin >= 0 && b.startMin <= MINUTES_IN_DAY - 1) ||
-      !(isInt(b.durationMin) && b.durationMin >= 5 && b.durationMin <= 480) ||
-      !textOk(b.service, 1, 120) ||
+      !lines ||
       !(b.notes === undefined || (typeof b.notes === "string" && b.notes.length <= 1000)) ||
       !CHANNELS.includes(b.channel as (typeof CHANNELS)[number])
     ) {
       return { status: 400 };
     }
     const startMin = b.startMin as number;
-    const durationMin = b.durationMin as number;
+    const durationMin = totalDuration(lines);
     const bookingDate = b.bookingDate as string;
     if (startMin + durationMin > MINUTES_IN_DAY) return { status: 400 };
     if (bookingDate < today) return { status: 400 };
@@ -116,6 +159,7 @@ export class BookingModel {
     if (!this.fitsHours(salon, startMin, durationMin)) return { status: 400 };
 
     const notes = typeof b.notes === "string" && b.notes.trim() ? b.notes.trim() : null;
+    const services = placeServiceLines(startMin, lines);
     const booking: BookingDTO = {
       id: "(pending)",
       salonId: salon.id,
@@ -124,7 +168,8 @@ export class BookingModel {
       bookingDate,
       startMin,
       durationMin,
-      service: (b.service as string).trim(),
+      services,
+      serviceLabel: joinServiceLabel(services),
       notes,
       status: "confirmed",
       channel: b.channel as BookingDTO["channel"],
@@ -142,29 +187,33 @@ export class BookingModel {
     const today = todayInSalonTz();
     if (!isUuid(id)) return { status: 400 };
     const p = patch;
+    const lines = p.services !== undefined ? validateServiceLines(p.services) : undefined;
     if (
       (p.clientName !== undefined && !textOk(p.clientName, 2, 120)) ||
       (p.clientPhone !== undefined && !textOk(p.clientPhone, 1, 32)) ||
       (p.bookingDate !== undefined && !isValidDateString(p.bookingDate)) ||
       (p.startMin !== undefined && !(isInt(p.startMin) && p.startMin >= 0 && p.startMin <= MINUTES_IN_DAY - 1)) ||
-      (p.durationMin !== undefined && !(isInt(p.durationMin) && p.durationMin >= 5 && p.durationMin <= 480)) ||
-      (p.service !== undefined && !textOk(p.service, 1, 120)) ||
+      (p.services !== undefined && !lines) ||
       (p.notes !== undefined && !(typeof p.notes === "string" && p.notes.length <= 1000)) ||
       (p.status !== undefined && !STATUSES.includes(p.status as (typeof STATUSES)[number]))
     ) {
       return { status: 400 };
     }
+
+    const current = this.bookings.get(id);
+    if (!current) return { status: 404 };
+
+    const nextStartMin = p.startMin !== undefined ? (p.startMin as number) : current.startMin;
+    const nextLines: ServiceLineInput[] =
+      lines ?? current.services.map((s) => ({ service: s.service, durationMin: s.durationMin, price: s.price }));
+    const nextDuration = totalDuration(nextLines);
     if (
-      p.startMin !== undefined &&
-      p.durationMin !== undefined &&
-      (p.startMin as number) + (p.durationMin as number) > MINUTES_IN_DAY
+      (p.startMin !== undefined || p.services !== undefined) &&
+      nextStartMin + nextDuration > MINUTES_IN_DAY
     ) {
       return { status: 400 };
     }
     if (p.bookingDate !== undefined && (p.bookingDate as string) < today) return { status: 400 };
-
-    const current = this.bookings.get(id);
-    if (!current) return { status: 404 };
 
     const next: BookingDTO = { ...current };
     if (p.clientName !== undefined) next.clientName = (p.clientName as string).trim();
@@ -174,14 +223,15 @@ export class BookingModel {
       next.clientPhone = phone.e164;
     }
     if (p.bookingDate !== undefined) next.bookingDate = p.bookingDate as string;
-    if (p.startMin !== undefined) next.startMin = p.startMin as number;
-    if (p.durationMin !== undefined) next.durationMin = p.durationMin as number;
-    if (p.service !== undefined) next.service = (p.service as string).trim();
+    next.startMin = nextStartMin;
+    next.services = placeServiceLines(nextStartMin, nextLines);
+    next.durationMin = nextDuration;
+    next.serviceLabel = joinServiceLabel(next.services);
     if (p.notes !== undefined) next.notes = (p.notes as string).trim() || null;
     if (p.status !== undefined) next.status = p.status as BookingDTO["status"];
 
     const movingInTime =
-      p.startMin !== undefined || p.durationMin !== undefined || p.bookingDate !== undefined;
+      p.startMin !== undefined || p.services !== undefined || p.bookingDate !== undefined;
     const reviving = current.status === "cancelled" && next.status !== "cancelled";
     if (movingInTime || reviving) {
       const salon = this.salonsById.get(current.salonId);

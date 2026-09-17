@@ -5,9 +5,9 @@ import {
   bookingsWatermark,
   getSalonBySlug,
   listBookings,
+  toBookingDTOs,
 } from "@/lib/bookings";
 import { daysBetween, isValidDateString } from "@/lib/time";
-import { toBookingDTO } from "@/lib/types";
 import { listQuerySchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -84,7 +84,7 @@ export async function GET(request: Request) {
       return jsonNoStore({
         watermark,
         changed: true,
-        bookings: rows.map(toBookingDTO),
+        bookings: await toBookingDTOs(rows),
         ...range,
       });
     }

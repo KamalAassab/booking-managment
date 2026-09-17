@@ -6,10 +6,14 @@ import {
   readJson,
   unauthorized,
 } from "@/lib/api";
-import { cancelBooking, updateBooking } from "@/lib/bookings";
+import { cancelBooking, updateBooking, type BookingResult } from "@/lib/bookings";
 import { todayInSalonTz } from "@/lib/time";
 import { toBookingDTO } from "@/lib/types";
 import { updateBookingSchema } from "@/lib/validation";
+
+function jsonBooking(result: BookingResult) {
+  return { booking: toBookingDTO(result, result.services) };
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,11 +54,11 @@ export async function PATCH(
       );
     }
 
-    const booking = await updateBooking(id, parsed.data);
-    if (!booking) {
+    const result = await updateBooking(id, parsed.data);
+    if (!result) {
       return jsonNoStore({ error: "Réservation introuvable." }, 404);
     }
-    return jsonNoStore({ booking: toBookingDTO(booking) });
+    return jsonNoStore(jsonBooking(result));
   } catch (error) {
     return errorResponse(error, "PATCH /api/bookings/[id]");
   }
@@ -74,11 +78,11 @@ export async function DELETE(
       return jsonNoStore({ error: "Identifiant invalide." }, 400);
     }
 
-    const booking = await cancelBooking(id);
-    if (!booking) {
+    const result = await cancelBooking(id);
+    if (!result) {
       return jsonNoStore({ error: "Réservation introuvable." }, 404);
     }
-    return jsonNoStore({ booking: toBookingDTO(booking) });
+    return jsonNoStore(jsonBooking(result));
   } catch (error) {
     return errorResponse(error, "DELETE /api/bookings/[id]");
   }

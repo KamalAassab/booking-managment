@@ -245,10 +245,13 @@ describe("rangesOverlap", () => {
 });
 
 describe("conflictsWithExisting", () => {
+  const line = (startMin: number, durationMin: number) => [
+    { service: "Coupe", startMin, durationMin },
+  ];
   const existing = [
-    { id: "a", startMin: 600, durationMin: 60, status: "confirmed" },
-    { id: "b", startMin: 780, durationMin: 30, status: "cancelled" },
-    { id: "c", startMin: 900, durationMin: 90, status: "done" },
+    { id: "a", status: "confirmed", services: line(600, 60) },
+    { id: "b", status: "cancelled", services: line(780, 30) },
+    { id: "c", status: "done", services: line(900, 90) },
   ];
 
   it("finds a clash with a confirmed booking", () => {
@@ -282,7 +285,7 @@ describe("conflictsWithExisting", () => {
   });
 
   it("a long booking swallows the slots behind it", () => {
-    const list = [{ id: "x", startMin: 840, durationMin: 90, status: "confirmed" }];
+    const list = [{ id: "x", status: "confirmed", services: line(840, 90) }];
     // 14:00 + 90min blocks 14:30 and 15:00 but not 15:30.
     expect(conflictsWithExisting({ startMin: 870, durationMin: 30 }, list)).toBe(true);
     expect(conflictsWithExisting({ startMin: 900, durationMin: 30 }, list)).toBe(true);

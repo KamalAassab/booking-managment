@@ -4,9 +4,9 @@ import { ArrowUpRight, Check, ChevronLeft, ChevronRight, SalonGlyph } from "@/co
 import { OwnerPasswordForms } from "@/components/owner-password-forms";
 import { PageHeader } from "@/components/page-header";
 import { Sidebar } from "@/components/sidebar";
-import type { Booking, Salon } from "@/db/schema";
+import type { Salon } from "@/db/schema";
 import { requireOwner } from "@/lib/auth";
-import { listBookingsForSalons, listSalons } from "@/lib/bookings";
+import { listBookingsForSalons, listSalons, toBookingDTOs } from "@/lib/bookings";
 import { bookingPhase, formatDuration, occupancy } from "@/lib/day-layout";
 import { setupNoticeFor } from "@/lib/page-errors";
 import { formatPhoneForDisplay } from "@/lib/phone";
@@ -21,6 +21,7 @@ import {
   relativeDayLabel,
   todayInSalonTz,
 } from "@/lib/time";
+import type { BookingDTO } from "@/lib/types";
 import { toSalonDTO } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -37,12 +38,14 @@ export default async function OwnerPage({ searchParams }: PageProps<"/owner">) {
   const date = requested && isValidDateString(requested) ? requested : today;
 
   let salons: Salon[];
-  let bookings: Booking[];
+  let bookings: BookingDTO[];
   try {
     salons = await listSalons();
-    bookings = await listBookingsForSalons(
-      salons.map((s) => s.id),
-      date,
+    bookings = await toBookingDTOs(
+      await listBookingsForSalons(
+        salons.map((s) => s.id),
+        date,
+      ),
     );
   } catch (error) {
     const notice = setupNoticeFor(error);
@@ -145,7 +148,7 @@ export default async function OwnerPage({ searchParams }: PageProps<"/owner">) {
                                 <span className="truncate">{b.clientName}</span>
                               </span>
                               <span className="bk-line text-[12.5px]" data-nums>
-                                {b.service} · {formatPhoneForDisplay(b.clientPhone)}
+                                {b.serviceLabel} · {formatPhoneForDisplay(b.clientPhone)}
                               </span>
                             </span>
                             <span className="shrink-0 text-[12px]" style={{ color: "var(--ink-faint)" }} data-nums>
